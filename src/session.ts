@@ -11,6 +11,7 @@ export class TmuxPaneSession extends BaseSession {
     ) {
         super(logger)
         this.open = true
+        this.controller.registerPane(this.paneId, this)
     }
 
     async start(): Promise<void> {
@@ -25,12 +26,25 @@ export class TmuxPaneSession extends BaseSession {
         this.controller.writeToPane(this.paneId, data)
     }
 
+    /**
+     * Called by BaseTerminalTabComponent when the user types in the terminal.
+     * This is the main input method for user keyboard input.
+     */
+    feedFromTerminal(data: Buffer): void {
+        this.controller.writeToPane(this.paneId, data)
+    }
+
     kill(_signal?: string): void {
-        // TODO: kill pane
+        this.destroy()
+    }
+
+    async destroy(): Promise<void> {
+        await super.destroy()
+        this.controller.unregisterPane(this.paneId)
     }
 
     async gracefullyKillProcess(): Promise<void> {
-        // TODO: kill pane gracefully
+        this.destroy()
     }
 
     supportsWorkingDirectory(): boolean {
@@ -42,6 +56,7 @@ export class TmuxPaneSession extends BaseSession {
     }
 
     emitOutputToPane(data: Buffer) {
+        // emitOutput expects Buffer - it will be processed through middleware
         this.emitOutput(data)
     }
 }
@@ -49,8 +64,12 @@ export class TmuxPaneSession extends BaseSession {
 export class TmuxControllerSession extends BaseSession {
     private paneSessions = new Map<number, TmuxPaneSession>()
     private buffer = ''
+    private sessionReady = false
+    private knownPanes = new Set<number>()
+    // Buffer for output received before the pane session is registered
+    private pendingPaneOutput = new Map<number, Buffer[]>()
 
-    public events = new Subject<any>()
+    public events = new Subject<{ type: string; paneId?: number; windowId?: string; line?: string }>()
 
     constructor(
         logger: Logger,
@@ -67,6 +86,10 @@ export class TmuxControllerSession extends BaseSession {
 
     async start(): Promise<void> {
         this.open = true
+        // Wait a bit for tmux to initialize, then request pane list
+        setTimeout(() => {
+            this.refreshPanes()
+        }, 500)
     }
 
     resize(columns: number, rows: number): void {
@@ -93,22 +116,46 @@ export class TmuxControllerSession extends BaseSession {
         return this.underlyingSession.getWorkingDirectory()
     }
 
-    resizePane(_paneId: number, _columns: number, _rows: number) {
-        // tmux command to resize pane?
-        // Actually tmux handles resizing based on layout changes usually or we send client resize.
-        // In control mode, we might trust tmux or send commands.
+    resizePane(_paneId: number, columns: number, rows: number) {
+        // In tmux control mode, we use refresh-client -C to set the client size
+        // This affects all panes - tmux control mode requires uniform size
+        this.write(Buffer.from(`refresh-client -C ${columns}x${rows}\r`))
     }
 
-    writeToPane(_paneId: number, data: Buffer) {
-        // We probably don't need to wrap input in control mode?
-        // Or do we?
-        // In -CC mode, stdin is sent to tmux client, which forwards to active pane?
-        // No, we need to target specific pane.
-        // Tmux -CC input: simply write to stdin?
-        // If we simply write to stdin, it goes to the currently active pane in tmux?
-        // We might not be able to send to background panes easily without switching?
-        // Actually, normal input goes to active pane.
-        this.write(data)
+    writeToPane(paneId: number, data: Buffer) {
+        // We cannot just write to stdin because it goes to the active pane.
+        // We must target the specific pane using send-keys.
+        // Using -H (hex) avoids escaping issues.
+        const hex = data.toString('hex')
+        if (hex.length > 0) {
+            this.write(Buffer.from(`send-keys -t %${paneId} -H ${hex}\r`))
+        }
+    }
+
+    registerPane(paneId: number, session: TmuxPaneSession) {
+        this.paneSessions.set(paneId, session)
+
+        // Flush any buffered output that was received before the pane session was registered
+        const pendingOutput = this.pendingPaneOutput.get(paneId)
+        if (pendingOutput && pendingOutput.length > 0) {
+            for (const data of pendingOutput) {
+                session.emitOutputToPane(data)
+            }
+            this.pendingPaneOutput.delete(paneId)
+        }
+    }
+
+    unregisterPane(paneId: number) {
+        this.paneSessions.delete(paneId)
+        this.pendingPaneOutput.delete(paneId)
+    }
+
+    getPaneSession(paneId: number): TmuxPaneSession | undefined {
+        return this.paneSessions.get(paneId)
+    }
+
+    hasPaneSession(paneId: number): boolean {
+        return this.paneSessions.has(paneId)
     }
 
     private handleOutput(data: string) {
@@ -124,33 +171,96 @@ export class TmuxControllerSession extends BaseSession {
     }
 
     private parseLine(line: string) {
+        // Strip DCS sequence artifacts
+        line = line.replace(/^\x1bP\d+p/, '').replace(/^P\d+p/, '').replace(/\x1b\\$/, '')
+
+        if (!line) return
+
         if (line.startsWith('%output')) {
             // %output %<pane> <content...>
-            const parts = line.split(' ')
-            const paneIdStr = parts[1]
-            if (paneIdStr && paneIdStr.startsWith('%')) {
+            const spaceIdx = line.indexOf(' ', 8)
+            if (spaceIdx === -1) return
+
+            const paneIdStr = line.substring(8, spaceIdx)
+            const contentStr = line.substring(spaceIdx + 1)
+
+            if (paneIdStr.startsWith('%')) {
                 const paneId = parseInt(paneIdStr.substring(1))
-                // const _content = parts.slice(2).join(' ')
+                const data = this.unescapeTmuxOutput(contentStr)
+
                 if (this.paneSessions.has(paneId)) {
-                    // this.paneSessions.get(paneId)!.emitOutputToPane(Buffer.from(content))
+                    // Pane session exists, send output directly
+                    this.paneSessions.get(paneId)?.emitOutputToPane(data)
+                } else {
+                    // Pane session not yet registered, buffer the output
+                    if (!this.pendingPaneOutput.has(paneId)) {
+                        this.pendingPaneOutput.set(paneId, [])
+                    }
+                    this.pendingPaneOutput.get(paneId)!.push(data)
                 }
             }
         } else if (line.startsWith('%begin')) {
             this.events.next({ type: 'begin' })
         } else if (line.startsWith('%end')) {
             this.events.next({ type: 'end' })
-        } else if (line.startsWith('@session-changed')) {
+        } else if (line.startsWith('%session-changed')) {
             this.events.next({ type: 'session-changed' })
-        } else if (line.startsWith('@window-add')) {
-            // @window-add <window-id>
+            this.refreshPanes()
+        } else if (line.startsWith('%window-add')) {
             const parts = line.split(' ')
             this.events.next({ type: 'window-add', windowId: parts[1] })
-        } else if (line.startsWith('@pane-add')) {
-            // @pane-add <window-id> <pane-id>
-            this.events.next({ type: 'pane-add', line })
+            this.refreshPanes()
+        } else if (line.startsWith('%window-close') || line.startsWith('%unlinked-window-close')) {
+            // Handle window close if needed
+            this.refreshPanes()
         } else {
-            // Protocol message
-            this.emitOutput(Buffer.from(line + '\r\n'))
+            // Check if it looks like a pane ID from our list-panes calls
+            if (line.startsWith('TABBY_PANE:')) {
+                const paneIdStr = line.substring(11).trim() // TABBY_PANE:%0
+                if (paneIdStr.startsWith('%')) {
+                    const paneId = parseInt(paneIdStr.substring(1), 10)
+                    if (!isNaN(paneId) && !this.knownPanes.has(paneId)) {
+                        this.knownPanes.add(paneId)
+                        this.events.next({ type: 'pane-add', paneId })
+                    }
+                }
+            }
         }
+
+        // Detect session ready state (tmux prompt or begin/end blocks)
+        if (!this.sessionReady && (line.startsWith('%begin') || line.startsWith('%session-changed'))) {
+            this.sessionReady = true
+            this.refreshPanes()
+        }
+    }
+
+    private unescapeTmuxOutput(str: string): Buffer {
+        // Unescape octal sequences \xxx
+        // tmux escapes: characters < ASCII 32 and \ character
+        // UTF-8 multi-byte characters (like "➜") pass through unescaped
+
+        let result = ''
+        for (let i = 0; i < str.length; i++) {
+            if (str[i] === '\\' && i + 3 < str.length) {
+                // Check for octal sequence (e.g., \033 for ESC, \015 for CR)
+                const octal = str.substring(i + 1, i + 4)
+                if (/^[0-7]{3}$/.test(octal)) {
+                    // Convert octal to character (preserves control chars like ESC)
+                    result += String.fromCharCode(parseInt(octal, 8))
+                    i += 3
+                    continue
+                }
+            }
+            // Keep the character as-is (including UTF-8 characters like "➜")
+            result += str[i]
+        }
+
+        // Convert the unescaped string to Buffer using UTF-8 encoding
+        // This properly handles both ASCII and multi-byte Unicode characters
+        return Buffer.from(result, 'utf-8')
+    }
+
+    private refreshPanes() {
+        this.write(Buffer.from('list-panes -s -F "TABBY_PANE:#{pane_id}"\r'))
     }
 }

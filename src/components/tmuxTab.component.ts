@@ -1,7 +1,7 @@
 import { Component, Injector, OnInit, OnDestroy } from '@angular/core'
-import { spawn, ChildProcess } from 'child_process'
 import { Subject, Subscription } from 'rxjs'
 import { AppService, BaseTabComponent, LogService, Logger } from 'tabby-core'
+import { PTYInterface, PTYProxy } from 'tabby-local'
 import { TmuxProfile } from '../profiles'
 import { TmuxControllerSession } from '../session'
 import { TmuxPaneTabComponent } from './tmuxPaneTab.component'
@@ -29,7 +29,7 @@ export class TmuxTabComponent extends BaseTabComponent implements OnInit, OnDest
     public profile: TmuxProfile
     public lastOutput: string = ''
 
-    private tmuxProcess: ChildProcess
+    private pty: PTYProxy
     private logger: Logger
     private outputSubscription: Subscription
 
@@ -40,12 +40,7 @@ export class TmuxTabComponent extends BaseTabComponent implements OnInit, OnDest
     ) {
         super(injector)
         this.logger = log.create('tmux')
-        this.profile = {} as TmuxProfile // Profile should be passed via inputs in Tabby, but typically appService.openNewTab sets it.
-        // BaseTabComponent doesn't handle input injection automatically.
-        // We might need to manually handle this if we expect inputs in constructor.
-        // But usually, inputs are set on the component instance after creation.
-        // Actually BaseTabComponent usually doesn't inject inputs automatically in constructor like this?
-        // Tab inputs are assigned to properties.
+        this.profile = {} as TmuxProfile
     }
 
     ngOnInit(): void {
@@ -53,27 +48,44 @@ export class TmuxTabComponent extends BaseTabComponent implements OnInit, OnDest
     }
 
     async initializeSession(): Promise<void> {
-
         try {
-            this.tmuxProcess = spawn('tmux', ['-CC', 'new', '-A', '-s', this.profile.sessionName || 'default'])
+            const ptyInterface = this.injector.get(PTYInterface)
+            const cmd = 'tmux'
+            const args = ['-CC', 'new', '-A', '-s', this.profile.sessionName || 'default']
+
+            this.pty = await ptyInterface.spawn(cmd, args, {
+                env: { ...process.env }, // Ensure plain object
+                cwd: process.env.HOME,
+                name: 'xterm-256color',
+                cols: 80,
+                rows: 30, // Or get from host
+            })
 
             const output$ = new Subject<string>()
             const binaryOutput$ = new Subject<Buffer>()
             const closed$ = new Subject<void>()
 
-            this.tmuxProcess.stdout.on('data', (data) => {
-                const str = data.toString()
+            this.pty.subscribe('data', (data: any) => {
+                // data might be Uint8Array or Buffer
+                let str: string
+                if (Buffer.isBuffer(data)) {
+                    str = data.toString('utf-8')
+                } else if (data instanceof Uint8Array) {
+                    str = new TextDecoder().decode(data)
+                } else {
+                    str = data.toString()
+                }
                 output$.next(str)
-                this.lastOutput = str // For debug view
+                // binaryOutput$.next(data) // Optional
+                this.lastOutput = str
             })
 
-            this.tmuxProcess.stderr.on('data', (data) => {
-                const str = data.toString()
-                console.error('Tmux stderr:', str)
-                this.lastOutput = `ERR: ${str}`
+            this.pty.subscribe('exit', () => {
+                closed$.next()
+                this.destroy()
             })
 
-            this.tmuxProcess.on('close', () => {
+            this.pty.subscribe('close', () => {
                 closed$.next()
                 this.destroy()
             })
@@ -82,12 +94,10 @@ export class TmuxTabComponent extends BaseTabComponent implements OnInit, OnDest
                 output$,
                 binaryOutput$,
                 closed$,
-                resize: (_w: number, _h: number) => { },
-                write: (data: Buffer) => {
-                    this.tmuxProcess.stdin.write(data)
-                },
-                kill: () => this.tmuxProcess.kill(),
-                gracefullyKillProcess: async () => this.tmuxProcess.kill(),
+                resize: (w: number, h: number) => this.pty.resize(w, h),
+                write: (data: Buffer) => this.pty.write(data),
+                kill: () => this.pty.kill(),
+                gracefullyKillProcess: async () => this.pty.kill(),
                 supportsWorkingDirectory: () => false,
                 getWorkingDirectory: async () => null
             } as any
@@ -95,29 +105,42 @@ export class TmuxTabComponent extends BaseTabComponent implements OnInit, OnDest
             this.session = new TmuxControllerSession(this.logger, this.injector, underlyingSession)
 
             this.outputSubscription = this.session.events.subscribe(event => {
-                if (event.type === 'pane-add') {
-                    const parts = event.line.split(' ')
-                    const paneId = parseInt(parts[2].replace('%', ''))
-                    this.openPaneTab(paneId)
+                if (event.type === 'pane-add' && event.paneId !== undefined) {
+                    const paneId = event.paneId
+                    // Check if we already have a tab for this pane
+                    if (!this.session.hasPaneSession(paneId)) {
+                        this.openPaneTab(paneId)
+                    }
                 }
             })
 
             await this.session.start()
         } catch (e) {
+            this.lastOutput = `Error starting tmux: ${e.message}`
             throw e
         }
     }
 
+    private pendingPanes = new Set<number>()
+
     async openPaneTab(paneId: number): Promise<void> {
-        this.appService.openNewTab(
-            {
-                type: TmuxPaneTabComponent as any,
-                inputs: {
-                    controller: this.session,
-                    paneId,
+        if (this.pendingPanes.has(paneId)) {
+            return
+        }
+        this.pendingPanes.add(paneId)
+        try {
+            await this.appService.openNewTab(
+                {
+                    type: TmuxPaneTabComponent as any,
+                    inputs: {
+                        controller: this.session,
+                        paneId,
+                    }
                 }
-            }
-        )
+            )
+        } finally {
+            this.pendingPanes.delete(paneId)
+        }
     }
 
     async destroy(): Promise<void> {

@@ -33,6 +33,7 @@ export default {
     /^@ng-bootstrap/,
     /^rxjs/,
     /^tabby-/,
+    'tabby-local',
     'child_process',
     'fs',
     'path',

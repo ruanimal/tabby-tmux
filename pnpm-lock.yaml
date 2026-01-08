@@ -60,6 +60,9 @@ importers:
       style-loader:
         specifier: ^4.0.0
         version: 4.0.0(webpack@5.104.1)
+      tabby-local:
+        specifier: 1.0.197-nightly.1
+        version: 1.0.197-nightly.1(91b8532523ffc4f83aa746bf05623385)
       to-string-loader:
         specifier: ^1.2.0
         version: 1.2.0
@@ -1084,6 +1087,20 @@ packages:
       '@angular/platform-browser': ^15
       '@angular/platform-browser-dynamic': ^15
       rxjs: ^7
+
+  tabby-local@1.0.197-nightly.1:
+    resolution: {integrity: sha512-gPxTIK0CbnGirEMQ8rWYTjPRNxJPYWV5ciiqErH6ALr7jGAdckqm7wDUN8rbrpAKrEB94+srMT6pTbSDdNy/nA==}
+    peerDependencies:
+      '@angular/animations': ^15
+      '@angular/common': ^15
+      '@angular/core': ^15
+      '@angular/forms': ^15
+      '@angular/platform-browser': ^15
+      '@ng-bootstrap/ng-bootstrap': ^14
+      rxjs: ^7
+      tabby-core: '*'
+      tabby-settings: '*'
+      tabby-terminal: '*'
 
   tabby-settings@1.0.197-nightly.1:
     resolution: {integrity: sha512-+EIzyiGPU8hFLUh2YksWXZfGbtKLGAo0lWPdl3fW62/K0U1lllAY2oCjschpOpNW1P6UDpjZEtFiQDfK1EwkJw==}
@@ -2171,6 +2188,19 @@ snapshots:
       '@angular/platform-browser': 15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
       '@angular/platform-browser-dynamic': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))
       rxjs: 7.8.2
+
+  tabby-local@1.0.197-nightly.1(91b8532523ffc4f83aa746bf05623385):
+    dependencies:
+      '@angular/animations': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
+      '@angular/common': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
+      '@angular/core': 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
+      '@angular/forms': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2)
+      '@angular/platform-browser': 15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
+      '@ng-bootstrap/ng-bootstrap': 14.2.0(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2))(@angular/localize@15.2.10(@angular/compiler-cli@15.2.10(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(typescript@4.9.5))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))))(@popperjs/core@2.11.8)(rxjs@7.8.2)
+      rxjs: 7.8.2
+      tabby-core: 1.0.197-nightly.1(05134da76d3fc39e1eba54ae84834765)
+      tabby-settings: 1.0.197-nightly.1(78bb2b52321a7f07ae62cad349b1d38d)
+      tabby-terminal: 1.0.197-nightly.1(9dbb6ad3a7516bdb16b911336368d42d)
 
   tabby-settings@1.0.197-nightly.1(78bb2b52321a7f07ae62cad349b1d38d):
     dependencies:
