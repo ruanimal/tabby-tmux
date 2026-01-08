@@ -305,6 +305,9 @@ private refreshPanes() {
 - [tmux Control Mode Wiki](https://github.com/tmux/tmux/wiki/Control-Mode)
 - [Tabby 插件开发文档](https://github.com/Eugeny/tabby)
 - [tmux 官方手册](https://man.openbsd.org/tmux)
+- [tabby 代码](ref/tabby)
+- [tmux wiki](ref/tmux.wiki)
+- [iterm2](ref/iTerm2)
 
 ## 许可证
 
