@@ -316,21 +316,28 @@ export class TmuxController {
     async restorePaneHistory(paneId: number): Promise<void> {
         this.logger.info(`Restoring history for pane %${paneId}`)
         try {
-            // capture-pane -e (escape sequences) -p (stdout) -t pane
+            // capture-pane options:
+            // -e: include escape sequences (colors, attributes)
+            // -p: output to stdout
+            // -S-: start from beginning of history
+            //
+            // NOTE: We do NOT use -J (join wrapped lines) because it can break
+            // ANSI escape sequences, causing highlights to span across lines incorrectly.
+            // Instead, we let tmux output lines as-is and only fix the line ending format.
             const output = await this.gateway.sendCommand(
-                `capture-pane -e -p -t %${paneId}`,
+                `capture-pane -ep -S- -t %${paneId}`,
                 TMUX_COMMAND_TOLERATE_ERRORS
             )
 
             if (output && this.paneSessions.has(paneId)) {
-                // The output from capture-pane comes with newlines
-                // We convert it to buffer and emit it
-                const buffer = Buffer.from(output, 'utf-8')
-                // Add a newline as capture-pane might strip the last one or we want to ensure cursor is on new line
-                // actually capture-pane usually dumps the screen.
+                // capture-pane outputs Unix-style line endings (\n)
+                // but terminals need \r\n (CR+LF) for proper display:
+                // - \r (Carriage Return): move cursor to start of line
+                // - \n (Line Feed): move cursor down one line
+                // Without \r, lines will start at the column where the previous line ended
+                const normalizedOutput = output.replace(/\n/g, '\r\n')
+                const buffer = Buffer.from(normalizedOutput, 'utf-8')
                 this.paneSessions.get(paneId)?.emitOutputToPane(buffer)
-                // Force a redraw
-                this.paneSessions.get(paneId)?.emitOutputToPane(Buffer.from('\r'))
             }
         } catch (e) {
             this.logger.warn(`Failed to restore history for pane %${paneId}:`, e)
