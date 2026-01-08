@@ -8,9 +8,6 @@ import { TmuxGateway, TMUX_COMMAND_TOLERATE_ERRORS } from './gateway'
  * TmuxPaneSession - Represents a single tmux pane as a terminal session
  */
 export class TmuxPaneSession extends BaseSession {
-    private pendingDataBuffer: Buffer[] = []
-    private bufferReleased = false
-
     constructor(
         logger: Logger,
         private controller: TmuxController,
@@ -64,33 +61,15 @@ export class TmuxPaneSession extends BaseSession {
     }
 
     /**
-     * Buffer output until explicitly released
-     * This prevents output from being lost before the terminal is ready
+     * Emit output to the pane.
+     *
+     * Data flows through BaseSession's middleware and buffering mechanism.
+     * BaseTerminalTabComponent will automatically call releaseInitialDataBuffer()
+     * when the frontend is ready, so we don't need custom buffering here.
      */
     emitOutputToPane(data: Buffer): void {
-        console.log(`[TmuxPaneSession] pane ${this.paneId} emitOutputToPane: ${data.length} bytes, released=${this.bufferReleased}`)
-        if (!this.bufferReleased) {
-            this.logger.info(`Buffering ${data.length} bytes for pane %${this.paneId}`)
-            console.log(`[CONSOLE] Buffering ${data.length} bytes for pane %${this.paneId}`)
-            this.pendingDataBuffer.push(data)
-        } else {
-            this.logger.info(`Emitting ${data.length} bytes to pane %${this.paneId}`)
-            console.log(`[CONSOLE] Emitting ${data.length} bytes to pane %${this.paneId}`)
-            this.emitOutput(data)
-        }
-    }
-
-    /**
-     * Release buffered output to the terminal
-     */
-    releaseInitialDataBuffer(): void {
-        this.logger.info(`Releasing initial data buffer for pane %${this.paneId} (${this.pendingDataBuffer.length} chunks)`)
-        // console.log(`[CONSOLE] Releasing buffer for pane ${this.paneId}, ${this.pendingDataBuffer.length} chunks`)
-        this.bufferReleased = true
-        for (const data of this.pendingDataBuffer) {
-            this.emitOutput(data)
-        }
-        this.pendingDataBuffer = []
+        // Directly call emitOutput - it will be buffered by BaseSession until released
+        this.emitOutput(data)
     }
 }
 

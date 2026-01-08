@@ -1,5 +1,4 @@
 import { Component, Injector, Input, OnInit } from '@angular/core'
-import { first } from 'rxjs'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { TmuxController, TmuxPaneSession } from '../session'
 
@@ -42,7 +41,6 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         if (!this.controller) {
             throw new Error('Tmux controller not provided to pane tab')
         }
-        // console.log(`[PaneTab] initializeSession for pane ${this.paneId}`)
 
         // Create the pane session
         const paneSession = new TmuxPaneSession(this.logger, this.controller, this.paneId)
@@ -53,38 +51,16 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         // - frontend.input$ -> session.feedFromTerminal() (user input)
         // - session.closed$ -> tab close handling
         // - resize events
+        //
+        // IMPORTANT: BaseTerminalTabComponent will automatically call
+        // session.releaseInitialDataBuffer() when the frontend is ready
+        // (see BaseTerminalTabComponent.ngOnInit, line 398 in tabby-terminal),
+        // so we DON'T need to do it manually here.
         this.setSession(paneSession, true)
 
-        // Function to sync size and release initial buffer
-        const syncAndRelease = () => {
-            if (this.size) {
-                // Send terminal size to tmux for proper cursor positioning
-                paneSession.resize(this.size.columns, this.size.rows)
-            }
-            // Release buffered initial output (shell prompt, etc.)
-            console.log(`[PaneTab] syncAndRelease pane ${this.paneId}`)
-            paneSession.releaseInitialDataBuffer()
-        }
-
-        // Handle race condition: frontendReady$ might have already completed
-        if (this.frontendIsReady) {
-            console.log(`[PaneTab] frontendIsReady=true, calling syncAndRelease immediately`)
-            // Frontend already ready, execute immediately
-            syncAndRelease()
-        } else {
-            console.log(`[PaneTab] frontendIsReady=false, waiting for event`)
-            // Wait for frontend to be ready
-            this.frontendReady$.pipe(first()).subscribe(() => {
-                console.log(`[PaneTab] frontendReady$ event received`)
-                syncAndRelease()
-            })
-
-            // Fallback: if subscription missed the event, try after a delay
-            setTimeout(() => {
-                if (this.frontendIsReady && this.size) {
-                    syncAndRelease()
-                }
-            }, 500)
+        // If the frontend is already ready and we have a size, send an initial resize
+        if (this.frontendIsReady && this.size) {
+            paneSession.resize(this.size.columns, this.size.rows)
         }
     }
 
