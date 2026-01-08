@@ -1,0 +1,45 @@
+{
+    "name": "tabby-tmux",
+    "version": "1.0.0",
+    "description": "Tmux Control Mode support for Tabby",
+    "keywords": [
+        "tabby-plugin"
+    ],
+    "main": "dist/index.js",
+    "typings": "typings/index.d.ts",
+    "scripts": {
+        "build": "webpack --progress --color",
+        "watch": "webpack --progress --color --watch"
+    },
+    "files": [
+        "dist",
+        "typings"
+    ],
+    "author": "Ruan",
+    "license": "MIT",
+    "peerDependencies": {
+        "@angular/common": "^15",
+        "@angular/core": "^15",
+        "@angular/forms": "^15",
+        "@ng-bootstrap/ng-bootstrap": "^14",
+        "rxjs": "^7",
+        "tabby-core": "*",
+        "tabby-settings": "*",
+        "tabby-terminal": "*"
+    },
+    "devDependencies": {
+        "@angular/compiler": "^15.2.10",
+        "@angular/compiler-cli": "^15.2.10",
+        "@ngtools/webpack": "^15.2.11",
+        "@types/node": "^20.3.1",
+        "babel-loader": "^10.0.0",
+        "css-loader": "^7.1.2",
+        "sass": "^1.97.2",
+        "sass-loader": "^16.0.6",
+        "style-loader": "^4.0.0",
+        "to-string-loader": "^1.2.0",
+        "typescript": "^4.9.5",
+        "webpack": "^5.86.0",
+        "webpack-cli": "^5.0.1"
+    }
+}
