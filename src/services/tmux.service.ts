@@ -1,9 +1,11 @@
 import { Injectable, Injector } from '@angular/core'
 import { AppService, LogService, Logger, SelectorService, SelectorOption } from 'tabby-core'
 import { PTYInterface, PTYProxy } from 'tabby-local'
+import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { Subscription } from 'rxjs'
 import { TmuxController } from '../session'
 import { TmuxPaneTabComponent } from '../components/tmuxPaneTab.component'
+import { TmuxWindowTabComponent } from '../components/tmuxWindowTab.component'
 
 /**
  * TmuxService manages the tmux integration and provides a way to show the tmux session selector.
@@ -249,4 +251,98 @@ export class TmuxService {
         this.pendingPanes.clear()
         this.logger.info('Disconnected from tmux')
     }
+
+    /**
+     * Attach to tmux from an existing terminal tab.
+     * This sends `tmux -CC` to the terminal's session and parses the control mode output.
+     */
+    async attachToTerminal(terminalTab: BaseTerminalTabComponent<any>): Promise<void> {
+        if (this.connected) {
+            await this.disconnect()
+        }
+
+        const session = terminalTab.session
+        if (!session) {
+            this.logger.error('Terminal tab has no session')
+            return
+        }
+
+        this.logger.info('Attaching tmux to existing terminal session')
+
+        // Create a controller that uses the terminal's session for I/O
+        this.session = new TmuxController(
+            this.logger,
+            this.injector,
+            (data: string) => session.write(Buffer.from(data)),
+            () => this.disconnect()
+        )
+
+        // Subscribe to the terminal's output to parse tmux control mode
+        const outputSubscription = session.output$.subscribe((data: string) => {
+            this.buffer += data
+            const lines = this.buffer.split('\n')
+            if (lines.length > 1) {
+                this.buffer = lines.pop()!
+                for (const line of lines) {
+                    this.session?.handleLine(line)
+                }
+            }
+        })
+
+        // Subscribe to controller events
+        this.eventSubscription = this.session.events.subscribe(event => {
+            this.logger.info('Event received:', event.type, event)
+
+            switch (event.type) {
+                case 'initialized':
+                case 'session-changed':
+                    this.connected = true
+                    this.logger.info('Connected to tmux session via terminal')
+                    // Replace the terminal tab with a TmuxWindowTabComponent
+                    this.replaceTabWithTmuxWindow(terminalTab)
+                    break
+
+                case 'pane-add':
+                    if (event.paneId !== undefined) {
+                        if (!this.panes.includes(event.paneId)) {
+                            this.panes = [...this.panes, event.paneId]
+                        }
+                    }
+                    break
+
+                case 'exit':
+                    this.connected = false
+                    outputSubscription.unsubscribe()
+                    break
+            }
+        })
+
+        // Send the tmux -CC command to the terminal
+        // -CC: control mode with command echo
+        // new -A -s default: create or attach to session named 'default'
+        session.write(Buffer.from('tmux -CC new -A -s default\n'))
+    }
+
+    /**
+     * Replace the terminal tab with a TmuxWindowTabComponent
+     */
+    private async replaceTabWithTmuxWindow(terminalTab: BaseTerminalTabComponent<any>): Promise<void> {
+        if (!this.session) return
+
+        // Open a new TmuxWindowTab with the existing controller
+        await this.appService.openNewTab({
+            type: TmuxWindowTabComponent as any,
+            inputs: {
+                existingController: this.session,
+                profile: { sessionName: this.session.getSessionName() },
+            }
+        })
+
+        // Close the original terminal tab
+        // Note: We delay slightly to ensure the new tab is ready
+        setTimeout(() => {
+            terminalTab.destroy()
+        }, 100)
+    }
 }
+
