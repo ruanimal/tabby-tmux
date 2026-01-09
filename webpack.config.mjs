@@ -84,6 +84,10 @@ export default {
           'to-string-loader',
           'css-loader'
         ],
+      },
+      {
+        test: /\.svg$/,
+        use: ['svg-inline-loader'],
       }
     ]
   },

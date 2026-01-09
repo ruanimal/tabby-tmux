@@ -1,9 +1,8 @@
 import { NgModule } from '@angular/core'
 import { CommonModule } from '@angular/common'
 import { FormsModule } from '@angular/forms'
-import TabbyCoreModule, { ProfileProvider } from 'tabby-core'
-import { TmuxProfileProvider } from './profiles'
-import { TmuxTabComponent } from './components/tmuxTab.component'
+import TabbyCoreModule, { CommandProvider } from 'tabby-core'
+import { TmuxCommandProvider } from './buttonProvider'
 import { TmuxPaneTabComponent } from './components/tmuxPaneTab.component'
 
 @NgModule({
@@ -13,14 +12,12 @@ import { TmuxPaneTabComponent } from './components/tmuxPaneTab.component'
         TabbyCoreModule,
     ],
     providers: [
-        { provide: ProfileProvider, useClass: TmuxProfileProvider, multi: true },
+        { provide: CommandProvider, useClass: TmuxCommandProvider, multi: true },
     ],
     declarations: [
-        TmuxTabComponent,
         TmuxPaneTabComponent,
     ],
     entryComponents: [
-        TmuxTabComponent,
         TmuxPaneTabComponent,
     ],
 })
