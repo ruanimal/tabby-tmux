@@ -292,14 +292,12 @@ export class TmuxController {
         this.paneSessions.set(paneId, session)
         this.knownPanes.add(paneId)
 
-        // Flush any buffered output
-        const pendingOutput = this.pendingPaneOutput.get(paneId)
-        if (pendingOutput && pendingOutput.length > 0) {
-            for (const data of pendingOutput) {
-                session.emitOutputToPane(data)
-            }
-            this.pendingPaneOutput.delete(paneId)
-        }
+        // Discard pending output — restorePaneHistory (capture-pane -S-)
+        // will restore the full scrollback including the visible content.
+        // Flushing pending output before capture-pane would duplicate the
+        // visible area, inflating total output and pushing the oldest
+        // history lines out of the terminal's scrollback buffer.
+        this.pendingPaneOutput.delete(paneId)
     }
 
     unregisterPane(paneId: number): void {

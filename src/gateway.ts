@@ -186,6 +186,18 @@ export class TmuxGateway {
                 this.stripLastNewline()
                 this.finishCurrentCommand(false)
                 // Fall through to handle %exit
+            } else if (line.startsWith('%output ') || line.startsWith('%extended-output ')) {
+                // Dispatch pane output notifications even during response blocks.
+                // Otherwise they get accumulated as garbage text in the command
+                // response (e.g. capture-pane) and the live output is lost.
+                if (this.acceptNotifications) {
+                    if (line.startsWith('%output ')) {
+                        this.parseOutput(line)
+                    } else {
+                        this.parseExtendedOutput(line)
+                    }
+                }
+                return
             } else {
                 // Accumulate response
                 this.currentResponse.push(line)
