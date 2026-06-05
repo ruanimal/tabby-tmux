@@ -267,14 +267,16 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
         this.logger.info(`Switching to window @${windowId}`)
 
-        // 1. Remove current active window's panes from SplitTab (keep tab objects alive)
+        // 1. Detach current active window's pane views (don't use removeTab —
+        //    SplitTabComponent.removeTab destroys the tab when root.children
+        //    becomes empty). Instead, clear the root directly.
         if (this.activeWindowId !== null) {
             const paneMap = this.windowPaneTabs.get(this.activeWindowId)
             if (paneMap) {
-                this.logger.info(`Removing existing ${paneMap.size} pane(s) for window @${this.activeWindowId}`)
+                this.logger.info(`Detaching ${paneMap.size} pane(s) for window @${this.activeWindowId}`)
                 for (const paneTab of paneMap.values()) {
                     (paneTab as any).emitVisibility(false)
-                    this.removeTab(paneTab as any)
+                    this.detachPaneView(paneTab as any)
                 }
             }
         }
@@ -324,6 +326,49 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         // 6. Refresh tmux client size
         this.refreshClientSize()
         this.cdr.detectChanges()
+    }
+
+    /**
+     * Detach a pane tab's view from the ViewContainer without calling
+     * removeTab() which would trigger self-destruction when root empties.
+     */
+    private detachPaneView(tab: any): void {
+        // Remove from root tree structure
+        const parent = this.getParentOf(tab)
+        if (parent) {
+            const index = parent.children.indexOf(tab)
+            if (index !== -1) {
+                parent.children.splice(index, 1)
+                parent.ratios.splice(index, 1)
+            }
+        }
+        // Remove the embedded view reference so layout() won't position it
+        ;(this as any).viewRefs?.delete(tab)
+        tab.removeFromContainer()
+        tab.parent = null
+    }
+
+    /**
+     * Override removeTab to prevent self-destruction when root.children
+     * becomes empty. In TmuxSessionTab, an empty root is normal during
+     * window switches and should not destroy the session tab.
+     */
+    override removeTab(tab: any): void {
+        const parent = this.getParentOf(tab)
+        if (!parent) return
+
+        const index = parent.children.indexOf(tab)
+        parent.ratios.splice(index, 1)
+        parent.children.splice(index, 1)
+
+        tab.removeFromContainer()
+        tab.parent = null
+        ;(this as any).viewRefs?.delete(tab)
+
+        this.layout()
+
+        // Do NOT destroy self when root is empty — this is normal during
+        // tmux window switches.
     }
 
     /**
@@ -455,7 +500,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             // If it was in the active window, remove from SplitTab
             if (currentWindowId === this.activeWindowId) {
                 (paneTab as any).emitVisibility(false)
-                this.removeTab(paneTab as any)
+                this.detachPaneView(paneTab as any)
             }
         }
     }
@@ -469,10 +514,10 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             // Destroy all pane tabs for this window
             for (const paneTab of paneMap.values()) {
                 if (windowId === this.activeWindowId) {
-                    ;(paneTab as any).emitVisibility(false)
-                    this.removeTab(paneTab as any)
+                    (paneTab as any).emitVisibility(false)
+                    this.detachPaneView(paneTab as any)
                 }
-                ;(paneTab as any).destroy()
+                (paneTab as any).destroy()
             }
             this.windowPaneTabs.delete(windowId)
         }
