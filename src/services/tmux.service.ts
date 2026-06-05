@@ -1,6 +1,5 @@
 import { Injectable, Injector } from '@angular/core'
-import { AppService, LogService, Logger, SelectorService, SelectorOption } from 'tabby-core'
-import { PTYInterface, PTYProxy } from 'tabby-local'
+import { AppService, LogService, Logger } from 'tabby-core'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { Subscription } from 'rxjs'
 import { TmuxController } from '../session'
@@ -8,13 +7,19 @@ import { TmuxController } from '../session'
 import { TmuxSessionTabComponent } from '../components/tmuxSessionTab.component'
 
 /**
- * TmuxService manages the tmux integration and provides a way to show the tmux session selector.
- * Each connected tmux session is represented by a single TmuxSessionTabComponent.
+ * TmuxService manages tmux integration.
+ *
+ * Each tmux session is bound to a terminal tab. When entering tmux mode,
+ * the entire topmost Tab (usually a SplitTab) containing the terminal tab
+ * is temporarily hidden from the Tabby tab list, and replaced with a
+ * TmuxSessionTab at the top level. On disconnect, the original topmost Tab is restored.
  */
-interface SessionContext {
+export interface SessionContext {
     controller: TmuxController
-    pty?: PTYProxy
-    terminalTab?: BaseTerminalTabComponent<any>
+    /** The original terminal tab, hidden while tmux is active */
+    terminalTab: BaseTerminalTabComponent<any>
+    /** The topmost parent Tab (SplitTabComponent or terminal tab) that was hidden */
+    topmostTab?: any
     sessionTab?: TmuxSessionTabComponent
     subscriptions: Subscription[]
 }
@@ -27,155 +32,79 @@ export class TmuxService {
     constructor(
         private injector: Injector,
         private appService: AppService,
-        private selectorService: SelectorService,
         log: LogService,
     ) {
         this.logger = log.create('tmux-service')
     }
 
-    // Simplified getters/status for backward compatibility or UI
     get isConnected(): boolean {
         return this.sessions.size > 0
     }
 
     get controller(): TmuxController | null {
-        // Return the first controller if any
         return this.sessions.values().next().value?.controller || null
     }
 
     /**
-     * Show the tmux session manager
+     * Find the SessionContext that owns a given sessionTab.
      */
-    async showTmuxManager(): Promise<void> {
-        // Simple selector for now
-        await this.showSessionSelector()
-    }
-
-    /**
-     * Show a selector to choose or create a tmux session
-     */
-    private async showSessionSelector(): Promise<void> {
-        const options: SelectorOption<string>[] = [
-            {
-                name: 'Connect to tmux (default session)',
-                description: 'Attach to or create the default tmux session',
-                icon: 'fas fa-layer-group',
-                result: 'default',
-            },
-        ]
-
-        try {
-            const sessionName = await this.selectorService.show<string>('Select Tmux Session', options)
-            if (sessionName) {
-                await this.connectToSession(sessionName)
-            }
-        } catch {
-            // User cancelled
+    findContextForTab(tab: TmuxSessionTabComponent): SessionContext | undefined {
+        for (const ctx of this.sessions) {
+            if (ctx.sessionTab === tab) return ctx
         }
-    }
-
-    // showPaneSelector removed as it's not relevant with tab-based window management
-
-
-    /**
-     * Connect to a tmux session (spawn local PTY)
-     */
-    async connectToSession(sessionName: string = 'default'): Promise<void> {
-        try {
-            const ptyInterface = this.injector.get(PTYInterface)
-            const cmd = 'tmux'
-            const args = ['-CC', 'new', '-A', '-s', sessionName]
-
-            const pty = await ptyInterface.spawn(cmd, args, {
-                env: { ...process.env },
-                cwd: process.env.HOME,
-                name: 'xterm-256color',
-                cols: 80,
-                rows: 30,
-            })
-
-            const context: SessionContext = {
-                controller: null!, // Set below
-                pty,
-                subscriptions: []
-            }
-
-            let buffer = ''
-
-            // Create controller
-            context.controller = new TmuxController(
-                this.logger,
-                this.injector,
-                (data: string) => pty.write(Buffer.from(data)),
-                () => this.disconnectContext(context)
-            )
-
-            // Parse output
-            pty.subscribe('data', (data: any) => {
-                let str: string
-                if (Buffer.isBuffer(data)) {
-                    str = data.toString('utf-8')
-                } else if (data instanceof Uint8Array) {
-                    str = new TextDecoder().decode(data)
-                } else {
-                    str = data.toString()
-                }
-
-                buffer += str
-                const lines = buffer.split('\n')
-                if (lines.length > 1) {
-                    buffer = lines.pop()!
-                    for (const line of lines) {
-                        context.controller.handleLine(line)
-                    }
-                }
-            })
-
-            pty.subscribe('exit', () => {
-                this.disconnectContext(context)
-            })
-
-            pty.subscribe('close', () => {
-                this.disconnectContext(context)
-            })
-
-            this.sessions.add(context)
-            this.setupControllerEvents(context)
-
-            this.logger.info(`Connecting to local tmux session: ${sessionName}`)
-
-        } catch (e) {
-            this.logger.error('Error starting tmux:', e)
-            throw e
-        }
+        return undefined
     }
 
     private setupControllerEvents(context: SessionContext): void {
         context.subscriptions.push(context.controller.events.subscribe(event => {
-            // On initialized, open the session tab if not already open
+            // On initialized, replace the terminal tab with the session tab
             if (event.type === 'initialized' && !context.sessionTab) {
-                this.openSessionTab(context)
+                this.replaceWithSessionTab(context)
             }
         }))
     }
 
-    private async openSessionTab(context: SessionContext): Promise<void> {
+    private replaceWithSessionTab(context: SessionContext): void {
         if (context.sessionTab) return
 
-        const tab = this.appService.openNewTab({
+        this.logger.info('Creating TmuxSessionTab...')
+
+        // IMPORTANT: We must use openNewTabRaw, NOT openNewTab.
+        // openNewTab wraps non-SplitTab types in a wrapper SplitTab via wrapAndAddTab().
+        // But TmuxSessionTabComponent extends SplitTabComponent, and wrapAndAddTab's
+        // SplitTab.addTab(thing) has special logic: when thing instanceof SplitTabComponent,
+        // it extracts thing.root and then DESTROYS thing. This kills our component instance
+        // before it ever gets rendered, so ngOnInit/ngAfterViewInit never fire.
+        //
+        // openNewTabRaw adds the tab directly without wrapping, so our component's
+        // view is properly attached and lifecycle hooks execute normally.
+        const sessionTab = (this.appService as any).openNewTabRaw({
             type: TmuxSessionTabComponent as any,
             inputs: {
                 existingController: context.controller,
-                profile: {
-                    sessionName: context.controller.getSessionName(),
-                },
-            }
-        }) as any as TmuxSessionTabComponent
+                profile: { sessionName: context.controller.getSessionName() },
+            },
+        }) as TmuxSessionTabComponent
 
-        context.sessionTab = tab
+        context.sessionTab = sessionTab
 
-        // Handle tab closure by user
-        context.subscriptions.push(tab.destroyed$.subscribe(() => {
+        this.logger.info('TmuxSessionTab created, proceeding to hide original tab...')
+
+        // Find the topmost parent tab (the actual tab listed in the top tab bar)
+        const topmostTab = context.terminalTab.topmostParent || context.terminalTab
+        context.topmostTab = topmostTab
+
+        // Temporarily hide the topmost tab from the app tabs list
+        const tabs: any[] = (this.appService as any).tabs
+        const index = tabs.indexOf(topmostTab)
+        this.logger.info(`Original tab index in app tabs: ${index}`)
+        if (index !== -1) {
+            tabs.splice(index, 1)
+            ;(this.appService as any).tabsChanged.next()
+        }
+
+        // When the session tab is closed (by user or disconnect), clean up
+        context.subscriptions.push(sessionTab.destroyed$.subscribe(() => {
             context.sessionTab = undefined
         }))
     }
@@ -187,14 +116,15 @@ export class TmuxService {
 
         await context.controller.destroy()
 
-        if (context.pty) {
-            context.pty.kill()
-        }
-
-        // Close session tab if open
+        // Destroy the session tab (removes from tab bar)
         if (context.sessionTab) {
             context.sessionTab.destroy()
             context.sessionTab = undefined
+        }
+
+        // Restore the original topmost tab to the tab bar
+        if (context.topmostTab) {
+            ;(this.appService as any).addTabRaw(context.topmostTab)
         }
 
         this.logger.info('Disconnected tmux context')
@@ -209,13 +139,10 @@ export class TmuxService {
         }
     }
 
-
     /**
      * Attach to tmux from an existing terminal tab.
-     * This sends `tmux -CC` to the terminal's session and parses the control mode output.
-     */
-    /**
-     * Attach to tmux from an existing terminal tab.
+     * Replaces the terminal tab with a TmuxSessionTab, keeping the terminal tab
+     * hidden in context. On disconnect, the terminal tab is restored.
      */
     async attachToTerminal(terminalTab: BaseTerminalTabComponent<any>): Promise<void> {
         const session = terminalTab.session
@@ -254,7 +181,7 @@ export class TmuxService {
             }
         }))
 
-        // Handle terminal tab closure
+        // Handle terminal tab closure (disconnect on close)
         context.subscriptions.push(terminalTab.destroyed$.subscribe(() => {
             this.logger.info('Attached terminal tab closed, disconnecting session')
             this.disconnectContext(context)

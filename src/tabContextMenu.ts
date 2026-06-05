@@ -2,9 +2,13 @@ import { Injectable } from '@angular/core'
 import { TabContextMenuItemProvider, MenuItemOptions, BaseTabComponent } from 'tabby-core'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { TmuxService } from './services/tmux.service'
+import { TmuxSessionTabComponent } from './components/tmuxSessionTab.component'
 
 /**
- * TmuxContextMenuProvider - Adds "Enter Tmux Mode" to terminal tab context menu
+ * TmuxContextMenuProvider - Adds tmux-related items to tab context menu.
+ *
+ * - On a terminal tab: "Enter Tmux Mode" (replaces tab with TmuxSessionTab)
+ * - On a TmuxSessionTab: "Disconnect from Tmux" (restores original terminal tab)
  */
 @Injectable()
 export class TmuxContextMenuProvider extends TabContextMenuItemProvider {
@@ -17,13 +21,8 @@ export class TmuxContextMenuProvider extends TabContextMenuItemProvider {
     }
 
     async getItems(tab: BaseTabComponent, _tabHeader?: boolean): Promise<MenuItemOptions[]> {
-        // Only show for terminal tabs (not in tab header context menu)
-        if (!(tab instanceof BaseTerminalTabComponent)) {
-            return []
-        }
-
-        // Don't show if already in tmux mode
-        if (this.tmuxService.isConnected) {
+        // On a TmuxSessionTab: show disconnect option
+        if (tab instanceof TmuxSessionTabComponent) {
             return [
                 {
                     label: 'Disconnect from Tmux',
@@ -34,14 +33,19 @@ export class TmuxContextMenuProvider extends TabContextMenuItemProvider {
             ]
         }
 
-        return [
-            {
-                label: 'Enter Tmux Mode',
-                click: async () => {
-                    await this.tmuxService.attachToTerminal(tab as BaseTerminalTabComponent<any>)
+        // On a terminal tab: show enter tmux mode option
+        if (tab instanceof BaseTerminalTabComponent) {
+            return [
+                {
+                    label: 'Enter Tmux Mode',
+                    click: async () => {
+                        await this.tmuxService.attachToTerminal(tab as BaseTerminalTabComponent<any>)
+                    },
                 },
-            },
-        ]
+            ]
+        }
+
+        return []
     }
 }
 

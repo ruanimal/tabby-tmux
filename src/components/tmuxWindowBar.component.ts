@@ -160,6 +160,10 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
     ngOnInit(): void {
         this.refreshWindows()
 
+        if (!this.controller) {
+            return
+        }
+
         this.subscription = this.controller.events.subscribe(event => {
             switch (event.type) {
                 case 'window-add':
@@ -179,6 +183,12 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
     }
 
     private refreshWindows(): void {
+        if (!this.controller) {
+            this.windows = []
+            this.cdr.detectChanges()
+            return
+        }
+
         const windowStates = this.controller.getAllWindowStates()
         this.windows = windowStates.map(ws => ({
             id: ws.id,
