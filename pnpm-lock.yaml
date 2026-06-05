@@ -16,22 +16,22 @@ importers:
         version: 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
       '@angular/forms':
         specifier: ^15
-        version: 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2)
+        version: 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2)
       '@ng-bootstrap/ng-bootstrap':
         specifier: ^14
-        version: 14.2.0(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2))(@angular/localize@15.2.10(@angular/compiler-cli@15.2.10(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(typescript@4.9.5))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))))(@popperjs/core@2.11.8)(rxjs@7.8.2)
+        version: 14.2.0(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2))(@angular/localize@15.2.10(@angular/compiler-cli@15.2.10(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(typescript@4.9.5))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))))(@popperjs/core@2.11.8)(rxjs@7.8.2)
       rxjs:
         specifier: ^7
         version: 7.8.2
       tabby-core:
         specifier: '*'
-        version: 1.0.197-nightly.1(05134da76d3fc39e1eba54ae84834765)
+        version: 1.0.163(a470613752b2d241c0eca1859bdeb231)
       tabby-settings:
         specifier: '*'
-        version: 1.0.197-nightly.1(78bb2b52321a7f07ae62cad349b1d38d)
+        version: 1.0.163(0f21c65e019047bb7c5f93368925b769)
       tabby-terminal:
         specifier: '*'
-        version: 1.0.197-nightly.1(9dbb6ad3a7516bdb16b911336368d42d)
+        version: 1.0.163(0c1cc87514c42a0cf072e20efd28cfc0)
     devDependencies:
       '@angular/compiler':
         specifier: ^15.2.10
@@ -65,7 +65,7 @@ importers:
         version: 0.8.2
       tabby-local:
         specifier: 1.0.197-nightly.1
-        version: 1.0.197-nightly.1(91b8532523ffc4f83aa746bf05623385)
+        version: 1.0.197-nightly.1(09c2bca895ea97e990e475ed6385d688)
       to-string-loader:
         specifier: ^1.2.0
         version: 1.2.0
@@ -84,12 +84,6 @@ packages:
   '@ampproject/remapping@2.3.0':
     resolution: {integrity: sha512-30iZtAPgz+LTIYoeivqYo853f02jBYSd5uGnGpkFV0M3xOt9aN73erkgYAmZU43x4VfqcnLxW9Kpg3R5LC4YYw==}
     engines: {node: '>=6.0.0'}
-
-  '@angular/animations@15.2.10':
-    resolution: {integrity: sha512-yxfN8qQpMaukRU5LjFkJBmy85rqrOp86tYVCsf+hmPEFRiXBMUj6xYLeCMcpk3Mt1JtnWGBR34ivGx+7bNeAow==}
-    engines: {node: ^14.20.0 || ^16.13.0 || >=18.10.0}
-    peerDependencies:
-      '@angular/core': 15.2.10
 
   '@angular/common@15.2.10':
     resolution: {integrity: sha512-jdBn3fctkqoNrJn9VLsUHpcCEhCxWSczdsR+BBbD6T0oLl6vMrAVNjPwfBejnlgfWN1KoRU9kgOYsMxa5apIWQ==}
@@ -293,36 +287,42 @@ packages:
     engines: {node: '>= 10.0.0'}
     cpu: [arm]
     os: [linux]
+    libc: [glibc]
 
   '@parcel/watcher-linux-arm-musl@2.5.1':
     resolution: {integrity: sha512-6E+m/Mm1t1yhB8X412stiKFG3XykmgdIOqhjWj+VL8oHkKABfu/gjFj8DvLrYVHSBNC+/u5PeNrujiSQ1zwd1Q==}
     engines: {node: '>= 10.0.0'}
     cpu: [arm]
     os: [linux]
+    libc: [musl]
 
   '@parcel/watcher-linux-arm64-glibc@2.5.1':
     resolution: {integrity: sha512-LrGp+f02yU3BN9A+DGuY3v3bmnFUggAITBGriZHUREfNEzZh/GO06FF5u2kx8x+GBEUYfyTGamol4j3m9ANe8w==}
     engines: {node: '>= 10.0.0'}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@parcel/watcher-linux-arm64-musl@2.5.1':
     resolution: {integrity: sha512-cFOjABi92pMYRXS7AcQv9/M1YuKRw8SZniCDw0ssQb/noPkRzA+HBDkwmyOJYp5wXcsTrhxO0zq1U11cK9jsFg==}
     engines: {node: '>= 10.0.0'}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@parcel/watcher-linux-x64-glibc@2.5.1':
     resolution: {integrity: sha512-GcESn8NZySmfwlTsIur+49yDqSny2IhPeZfXunQi48DMugKeZ7uy1FX83pO0X22sHntJ4Ub+9k34XQCX+oHt2A==}
     engines: {node: '>= 10.0.0'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@parcel/watcher-linux-x64-musl@2.5.1':
     resolution: {integrity: sha512-n0E2EQbatQ3bXhcH2D1XIAANAcTZkQICBPVaxMeaCVBtOpBZpWJuf7LwyWPSBDITb7In8mqQgJ7gH8CILCURXg==}
     engines: {node: '>= 10.0.0'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@parcel/watcher-win32-arm64@2.5.1':
     resolution: {integrity: sha512-RFzklRvmc3PkjKjry3hLF9wD7ppR4AKcWNzH7kXR7GUe0Igb3Nz8fyPwtZCSquGrhU5HhUNDr/mKBqj7tqA2Vw==}
@@ -1090,16 +1090,16 @@ packages:
   svg-inline-loader@0.8.2:
     resolution: {integrity: sha512-kbrcEh5n5JkypaSC152eGfGcnT4lkR0eSfvefaUJkLqgGjRQJyKDvvEE/CCv5aTSdfXuc+N98w16iAojhShI3g==}
 
-  tabby-core@1.0.197-nightly.1:
-    resolution: {integrity: sha512-GS4Q3orewMdZk4HAJp1vVg/Pv+FcN7E3o6TJHaUtPHRTWSeNM4MOoHY2HJINgcjaFuInthe4+8dK1W2aIECy2Q==}
+  tabby-core@1.0.163:
+    resolution: {integrity: sha512-zJgX/WsvCcHK0yvwaLmSAombDf4Dpgv8++wUbJ6LREQlw40aJZ9cQs7aeaXAa6/Mcuv1MCrN4e4gARuniZhS3A==}
     peerDependencies:
-      '@angular/animations': ^15
-      '@angular/common': ^15
-      '@angular/core': ^15
-      '@angular/forms': ^15
-      '@angular/platform-browser': ^15
-      '@angular/platform-browser-dynamic': ^15
-      rxjs: ^7
+      '@angular/animations': ^9.1.9
+      '@angular/common': ^9.1.11
+      '@angular/core': ^9.1.9
+      '@angular/forms': ^9.1.11
+      '@angular/platform-browser': ^9.1.11
+      '@angular/platform-browser-dynamic': ^9.1.11
+      rxjs: ^6.6.3
 
   tabby-local@1.0.197-nightly.1:
     resolution: {integrity: sha512-gPxTIK0CbnGirEMQ8rWYTjPRNxJPYWV5ciiqErH6ALr7jGAdckqm7wDUN8rbrpAKrEB94+srMT6pTbSDdNy/nA==}
@@ -1115,28 +1115,28 @@ packages:
       tabby-settings: '*'
       tabby-terminal: '*'
 
-  tabby-settings@1.0.197-nightly.1:
-    resolution: {integrity: sha512-+EIzyiGPU8hFLUh2YksWXZfGbtKLGAo0lWPdl3fW62/K0U1lllAY2oCjschpOpNW1P6UDpjZEtFiQDfK1EwkJw==}
+  tabby-settings@1.0.163:
+    resolution: {integrity: sha512-f18AU6LcN2hh8vS7dTDXM3zKQY7uHMX6Y2TqDJTFfxBQ2luLCvDPl1auS2tv/noZM4n6e4t/7kzOFdA9GYzuvA==}
     peerDependencies:
-      '@angular/animations': ^15
-      '@angular/common': ^15
-      '@angular/core': ^15
-      '@angular/forms': ^15
-      '@angular/platform-browser': ^15
-      '@ng-bootstrap/ng-bootstrap': ^14
-      rxjs: ^7
+      '@angular/animations': ^9.1.9
+      '@angular/common': ^9.1.11
+      '@angular/core': ^9.1.9
+      '@angular/forms': ^9.1.11
+      '@angular/platform-browser': ^9.1.11
+      '@ng-bootstrap/ng-bootstrap': ^6.1.0
+      rxjs: ^6.5.5
       tabby-core: '*'
 
-  tabby-terminal@1.0.197-nightly.1:
-    resolution: {integrity: sha512-eCzT7pL50PEtniUXlFnBBWMIfPmqX8eZ9EZoAbUIpfxv0/WJBDLsQnn6NiJaFBgwMdCF4hQ54TYdnvroJUScpg==}
+  tabby-terminal@1.0.163:
+    resolution: {integrity: sha512-S8rptbyBGvM/Ek+X/uUzwBRWdgyJwdSmiypJU05g2JnPyMKOPB96AMD9za4xP4avqs090tiaCdCFQb7bCwjOfw==}
     peerDependencies:
-      '@angular/animations': ^15
-      '@angular/common': ^15
-      '@angular/core': ^15
-      '@angular/forms': ^15
-      '@angular/platform-browser': ^15
-      '@ng-bootstrap/ng-bootstrap': ^14
-      rxjs: ^7
+      '@angular/animations': ^9.1.9
+      '@angular/common': ^9.1.11
+      '@angular/core': ^9.1.9
+      '@angular/forms': ^9.1.11
+      '@angular/platform-browser': ^9.1.11
+      '@ng-bootstrap/ng-bootstrap': ^6.1.0
+      rxjs: ^6.5.5
       tabby-core: '*'
       tabby-settings: '*'
 
@@ -1275,11 +1275,6 @@ snapshots:
       '@jridgewell/gen-mapping': 0.3.13
       '@jridgewell/trace-mapping': 0.3.31
 
-  '@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))':
-    dependencies:
-      '@angular/core': 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
-      tslib: 2.8.1
-
   '@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)':
     dependencies:
       '@angular/core': 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
@@ -1315,11 +1310,11 @@ snapshots:
       tslib: 2.8.1
       zone.js: 0.13.3
 
-  '@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2)':
+  '@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2)':
     dependencies:
       '@angular/common': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
       '@angular/core': 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
-      '@angular/platform-browser': 15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
+      '@angular/platform-browser': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
       rxjs: 7.8.2
       tslib: 2.8.1
 
@@ -1333,21 +1328,19 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@angular/platform-browser-dynamic@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))':
+  '@angular/platform-browser-dynamic@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))':
     dependencies:
       '@angular/common': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
       '@angular/compiler': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
       '@angular/core': 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
-      '@angular/platform-browser': 15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
+      '@angular/platform-browser': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
       tslib: 2.8.1
 
-  '@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))':
+  '@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))':
     dependencies:
       '@angular/common': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
       '@angular/core': 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
       tslib: 2.8.1
-    optionalDependencies:
-      '@angular/animations': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
 
   '@babel/code-frame@7.27.1':
     dependencies:
@@ -1470,11 +1463,11 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@ng-bootstrap/ng-bootstrap@14.2.0(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2))(@angular/localize@15.2.10(@angular/compiler-cli@15.2.10(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(typescript@4.9.5))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))))(@popperjs/core@2.11.8)(rxjs@7.8.2)':
+  '@ng-bootstrap/ng-bootstrap@14.2.0(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2))(@angular/localize@15.2.10(@angular/compiler-cli@15.2.10(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(typescript@4.9.5))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))))(@popperjs/core@2.11.8)(rxjs@7.8.2)':
     dependencies:
       '@angular/common': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
       '@angular/core': 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
-      '@angular/forms': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2)
+      '@angular/forms': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2)
       '@angular/localize': 15.2.10(@angular/compiler-cli@15.2.10(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(typescript@4.9.5))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))
       '@popperjs/core': 2.11.8
       rxjs: 7.8.2
@@ -2202,51 +2195,47 @@ snapshots:
       object-assign: 4.1.1
       simple-html-tokenizer: 0.1.1
 
-  tabby-core@1.0.197-nightly.1(05134da76d3fc39e1eba54ae84834765):
+  tabby-core@1.0.163(a470613752b2d241c0eca1859bdeb231):
     dependencies:
-      '@angular/animations': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
       '@angular/common': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
       '@angular/core': 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
-      '@angular/forms': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2)
-      '@angular/platform-browser': 15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
-      '@angular/platform-browser-dynamic': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))
+      '@angular/forms': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2)
+      '@angular/platform-browser': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
+      '@angular/platform-browser-dynamic': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))
       rxjs: 7.8.2
 
-  tabby-local@1.0.197-nightly.1(91b8532523ffc4f83aa746bf05623385):
+  tabby-local@1.0.197-nightly.1(09c2bca895ea97e990e475ed6385d688):
     dependencies:
-      '@angular/animations': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
       '@angular/common': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
       '@angular/core': 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
-      '@angular/forms': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2)
-      '@angular/platform-browser': 15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
-      '@ng-bootstrap/ng-bootstrap': 14.2.0(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2))(@angular/localize@15.2.10(@angular/compiler-cli@15.2.10(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(typescript@4.9.5))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))))(@popperjs/core@2.11.8)(rxjs@7.8.2)
+      '@angular/forms': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2)
+      '@angular/platform-browser': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
+      '@ng-bootstrap/ng-bootstrap': 14.2.0(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2))(@angular/localize@15.2.10(@angular/compiler-cli@15.2.10(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(typescript@4.9.5))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))))(@popperjs/core@2.11.8)(rxjs@7.8.2)
       rxjs: 7.8.2
-      tabby-core: 1.0.197-nightly.1(05134da76d3fc39e1eba54ae84834765)
-      tabby-settings: 1.0.197-nightly.1(78bb2b52321a7f07ae62cad349b1d38d)
-      tabby-terminal: 1.0.197-nightly.1(9dbb6ad3a7516bdb16b911336368d42d)
+      tabby-core: 1.0.163(a470613752b2d241c0eca1859bdeb231)
+      tabby-settings: 1.0.163(0f21c65e019047bb7c5f93368925b769)
+      tabby-terminal: 1.0.163(0c1cc87514c42a0cf072e20efd28cfc0)
 
-  tabby-settings@1.0.197-nightly.1(78bb2b52321a7f07ae62cad349b1d38d):
+  tabby-settings@1.0.163(0f21c65e019047bb7c5f93368925b769):
     dependencies:
-      '@angular/animations': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
       '@angular/common': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
       '@angular/core': 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
-      '@angular/forms': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2)
-      '@angular/platform-browser': 15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
-      '@ng-bootstrap/ng-bootstrap': 14.2.0(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2))(@angular/localize@15.2.10(@angular/compiler-cli@15.2.10(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(typescript@4.9.5))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))))(@popperjs/core@2.11.8)(rxjs@7.8.2)
+      '@angular/forms': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2)
+      '@angular/platform-browser': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
+      '@ng-bootstrap/ng-bootstrap': 14.2.0(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2))(@angular/localize@15.2.10(@angular/compiler-cli@15.2.10(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(typescript@4.9.5))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))))(@popperjs/core@2.11.8)(rxjs@7.8.2)
       rxjs: 7.8.2
-      tabby-core: 1.0.197-nightly.1(05134da76d3fc39e1eba54ae84834765)
+      tabby-core: 1.0.163(a470613752b2d241c0eca1859bdeb231)
 
-  tabby-terminal@1.0.197-nightly.1(9dbb6ad3a7516bdb16b911336368d42d):
+  tabby-terminal@1.0.163(0c1cc87514c42a0cf072e20efd28cfc0):
     dependencies:
-      '@angular/animations': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
       '@angular/common': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
       '@angular/core': 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
-      '@angular/forms': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2)
-      '@angular/platform-browser': 15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
-      '@ng-bootstrap/ng-bootstrap': 14.2.0(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/animations@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2))(@angular/localize@15.2.10(@angular/compiler-cli@15.2.10(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(typescript@4.9.5))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))))(@popperjs/core@2.11.8)(rxjs@7.8.2)
+      '@angular/forms': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2)
+      '@angular/platform-browser': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
+      '@ng-bootstrap/ng-bootstrap': 14.2.0(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2))(@angular/localize@15.2.10(@angular/compiler-cli@15.2.10(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(typescript@4.9.5))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))))(@popperjs/core@2.11.8)(rxjs@7.8.2)
       rxjs: 7.8.2
-      tabby-core: 1.0.197-nightly.1(05134da76d3fc39e1eba54ae84834765)
-      tabby-settings: 1.0.197-nightly.1(78bb2b52321a7f07ae62cad349b1d38d)
+      tabby-core: 1.0.163(a470613752b2d241c0eca1859bdeb231)
+      tabby-settings: 1.0.163(0f21c65e019047bb7c5f93368925b769)
 
   tapable@2.3.0: {}
 

@@ -206,7 +206,7 @@ export class TmuxController {
         this.logger.info('Refreshing panes list...')
         try {
             const result = await this.gateway.sendCommand(
-                'list-panes -s -F "#{pane_id}"',
+                'list-panes -s -F "#{pane_id} #{window_id}"',
                 TMUX_COMMAND_TOLERATE_ERRORS
             )
 
@@ -216,18 +216,37 @@ export class TmuxController {
             this.logger.info(`Found ${lines.length} pane(s) from list-panes:`, lines)
 
             for (const line of lines) {
-                this.logger.info(`Processing line: "${line}"`)
-                // Match both "%0" and "0" formats
-                const match = line.match(/^%?(\d+)$/)
+                // Match "%0 1" format (pane_id window_id)
+                const match = line.match(/^%?(\d+)\s+@?(\d+)$/)
                 if (match) {
                     const paneId = parseInt(match[1])
-                    this.logger.info(`Matched pane ID: ${paneId}, known=${this.knownPanes.has(paneId)}`)
+                    const windowId = parseInt(match[2])
+
+                    // Update window state
+                    let windowState = this.windowStates.get(windowId)
+                    if (!windowState) {
+                        // If we discovered a pane for an unknown window, create a stub state
+                        // The real window-add event might come later or already happened
+                        windowState = {
+                            id: windowId,
+                            name: `Window ${windowId}`,
+                            panes: new Set()
+                        }
+                        this.windowStates.set(windowId, windowState)
+                        // Emit window-add so the service knows about this window
+                        this.events.next({ type: 'window-add', windowId })
+                    }
+                    windowState.panes.add(paneId)
+
+                    this.logger.info(`Matched pane ID: ${paneId} window ID: ${windowId}, known=${this.knownPanes.has(paneId)}`)
+
                     if (!this.knownPanes.has(paneId)) {
                         this.knownPanes.add(paneId)
                         this.logger.info(`Discovered pane %${paneId} from list-panes, emitting event`)
-                        this.events.next({ type: 'pane-add', paneId })
+                        this.events.next({ type: 'pane-add', paneId, windowId })
                     } else {
-                        this.logger.info(`Pane %${paneId} already known, skipping`)
+                        // Check if window association changed (unlikely in normal operation but possible)
+                        this.events.next({ type: 'pane-update', paneId, windowId })
                     }
                 } else {
                     this.logger.info(`Unmatched pane line: "${line}"`)
@@ -421,6 +440,11 @@ export class TmuxController {
 
     getSessionId(): number {
         return this.sessionId
+    }
+
+    getWindowPanes(windowId: number): number[] {
+        const state = this.windowStates.get(windowId)
+        return state ? Array.from(state.panes) : []
     }
 }
 

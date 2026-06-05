@@ -9,6 +9,7 @@ import { parseTmuxLayout, TmuxLayoutNode, flattenLayout } from '../layoutParser'
 
 export interface TmuxWindowProfile {
     sessionName?: string
+    windowId?: number
 }
 
 /**
@@ -89,6 +90,7 @@ export class TmuxWindowTabComponent extends SplitTabComponent implements OnInit,
     connected = false
     sessionName = ''
     paneCount = 0
+    windowId?: number
 
     constructor(
         injector: Injector,
@@ -116,6 +118,7 @@ export class TmuxWindowTabComponent extends SplitTabComponent implements OnInit,
             await this.tmuxService.connectToSession(sessionName)
             this.controller = this.tmuxService.controller
         }
+        this.windowId = this.profile.windowId
 
         if (!this.controller) {
             this.logger.error('Failed to get tmux controller')
@@ -124,6 +127,14 @@ export class TmuxWindowTabComponent extends SplitTabComponent implements OnInit,
 
         this.sessionName = this.controller.getSessionName() || 'default'
         this.setTitle(`Tmux: ${this.sessionName}`)
+
+        // Initialize with existing panes if any
+        if (this.windowId !== undefined) {
+            const existingPanes = this.controller.getWindowPanes(this.windowId)
+            for (const paneId of existingPanes) {
+                this.addPaneToSplit(paneId)
+            }
+        }
 
         // Subscribe to controller events
         this.eventSubscription = this.controller.events.subscribe(event => {
@@ -140,6 +151,18 @@ export class TmuxWindowTabComponent extends SplitTabComponent implements OnInit,
 
                 case 'pane-add':
                     if (event.paneId !== undefined) {
+                        // Only add if it belongs to our window
+                        if (this.windowId !== undefined && event.windowId === this.windowId) {
+                            this.addPaneToSplit(event.paneId)
+                        } else if (this.windowId === undefined) {
+                            // Fallback for legacy behavior or if windowId not set (should not happen in new logic)
+                            this.addPaneToSplit(event.paneId)
+                        }
+                    }
+                    break
+
+                case 'pane-update':
+                    if (event.paneId !== undefined && event.windowId === this.windowId) {
                         this.addPaneToSplit(event.paneId)
                     }
                     break

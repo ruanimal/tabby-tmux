@@ -1,26 +1,28 @@
 import { Injectable, Injector } from '@angular/core'
-import { AppService, LogService, Logger, SelectorService, SelectorOption } from 'tabby-core'
+import { AppService, LogService, Logger, SelectorService, SelectorOption, BaseTabComponent } from 'tabby-core'
 import { PTYInterface, PTYProxy } from 'tabby-local'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { Subscription } from 'rxjs'
 import { TmuxController } from '../session'
-import { TmuxPaneTabComponent } from '../components/tmuxPaneTab.component'
+
 import { TmuxWindowTabComponent } from '../components/tmuxWindowTab.component'
 
 /**
  * TmuxService manages the tmux integration and provides a way to show the tmux session selector.
  * It replaces the need for a dedicated TmuxTabComponent tab.
  */
+interface SessionContext {
+    controller: TmuxController
+    pty?: PTYProxy
+    terminalTab?: BaseTerminalTabComponent<any>
+    windowTabs: Map<number, BaseTabComponent>
+    subscriptions: Subscription[]
+}
+
 @Injectable({ providedIn: 'root' })
 export class TmuxService {
     private logger: Logger
-    private pty: PTYProxy | null = null
-    private session: TmuxController | null = null
-    private eventSubscription: Subscription | null = null
-    private panes: number[] = []
-    private pendingPanes = new Set<number>()
-    private buffer = ''
-    private connected = false
+    private sessions = new Set<SessionContext>()
 
     constructor(
         private injector: Injector,
@@ -31,25 +33,22 @@ export class TmuxService {
         this.logger = log.create('tmux-service')
     }
 
+    // Simplified getters/status for backward compatibility or UI
     get isConnected(): boolean {
-        return this.connected
+        return this.sessions.size > 0
     }
 
     get controller(): TmuxController | null {
-        return this.session
+        // Return the first controller if any
+        return this.sessions.values().next().value?.controller || null
     }
 
     /**
-     * Show the tmux session manager - either connect to existing session or show pane list
+     * Show the tmux session manager
      */
     async showTmuxManager(): Promise<void> {
-        if (!this.connected || !this.session) {
-            // Not connected - show session name selector
-            await this.showSessionSelector()
-        } else {
-            // Connected - show pane list
-            await this.showPaneSelector()
-        }
+        // Simple selector for now
+        await this.showSessionSelector()
     }
 
     /**
@@ -75,52 +74,19 @@ export class TmuxService {
         }
     }
 
-    /**
-     * Show a selector with current panes
-     */
-    private async showPaneSelector(): Promise<void> {
-        const options: SelectorOption<number | string>[] = this.panes.map(paneId => ({
-            name: `Pane %${paneId}`,
-            description: 'Open this pane in a new tab',
-            icon: 'fas fa-terminal',
-            result: paneId,
-        }))
+    // showPaneSelector removed as it's not relevant with tab-based window management
 
-        // Add disconnect option
-        options.push({
-            name: 'Disconnect from tmux',
-            description: `Session: ${this.session?.getSessionName() || 'default'}`,
-            icon: 'fas fa-sign-out-alt',
-            color: '#dc3545',
-            result: '__disconnect__',
-        })
-
-        try {
-            const result = await this.selectorService.show<number | string>('Tmux Panes', options)
-            if (result === '__disconnect__') {
-                await this.disconnect()
-            } else if (typeof result === 'number') {
-                await this.openPaneTab(result)
-            }
-        } catch {
-            // User cancelled
-        }
-    }
 
     /**
-     * Connect to a tmux session
+     * Connect to a tmux session (spawn local PTY)
      */
     async connectToSession(sessionName: string = 'default'): Promise<void> {
-        if (this.connected) {
-            await this.disconnect()
-        }
-
         try {
             const ptyInterface = this.injector.get(PTYInterface)
             const cmd = 'tmux'
             const args = ['-CC', 'new', '-A', '-s', sessionName]
 
-            this.pty = await ptyInterface.spawn(cmd, args, {
+            const pty = await ptyInterface.spawn(cmd, args, {
                 env: { ...process.env },
                 cwd: process.env.HOME,
                 name: 'xterm-256color',
@@ -128,16 +94,25 @@ export class TmuxService {
                 rows: 30,
             })
 
-            // Create controller with writer and closer
-            this.session = new TmuxController(
+            const context: SessionContext = {
+                controller: null!, // Set below
+                pty,
+                windowTabs: new Map(),
+                subscriptions: []
+            }
+
+            let buffer = ''
+
+            // Create controller
+            context.controller = new TmuxController(
                 this.logger,
                 this.injector,
-                (data: string) => this.pty!.write(Buffer.from(data)),
-                () => this.disconnect()
+                (data: string) => pty.write(Buffer.from(data)),
+                () => this.disconnectContext(context)
             )
 
-            // Subscribe to PTY output and parse lines
-            this.pty.subscribe('data', (data: any) => {
+            // Parse output
+            pty.subscribe('data', (data: any) => {
                 let str: string
                 if (Buffer.isBuffer(data)) {
                     str = data.toString('utf-8')
@@ -147,56 +122,28 @@ export class TmuxService {
                     str = data.toString()
                 }
 
-                // Parse lines
-                this.buffer += str
-                const lines = this.buffer.split('\n')
+                buffer += str
+                const lines = buffer.split('\n')
                 if (lines.length > 1) {
-                    this.buffer = lines.pop()!
+                    buffer = lines.pop()!
                     for (const line of lines) {
-                        this.session?.handleLine(line)
+                        context.controller.handleLine(line)
                     }
                 }
             })
 
-            this.pty.subscribe('exit', () => {
-                this.disconnect()
+            pty.subscribe('exit', () => {
+                this.disconnectContext(context)
             })
 
-            this.pty.subscribe('close', () => {
-                this.disconnect()
+            pty.subscribe('close', () => {
+                this.disconnectContext(context)
             })
 
-            // Subscribe to controller events
-            this.eventSubscription = this.session.events.subscribe(event => {
-                this.logger.info('Event received:', event.type, event)
+            this.sessions.add(context)
+            this.setupControllerEvents(context)
 
-                switch (event.type) {
-                    case 'initialized':
-                    case 'session-changed':
-                        this.connected = true
-                        this.logger.info('Connected to tmux session')
-                        break
-
-                    case 'pane-add':
-                        if (event.paneId !== undefined) {
-                            if (!this.panes.includes(event.paneId)) {
-                                this.panes = [...this.panes, event.paneId]
-                                this.logger.info(`Added pane %${event.paneId}`)
-                                // Auto-open pane tab
-                                if (!this.session!.hasPaneSession(event.paneId)) {
-                                    this.openPaneTab(event.paneId)
-                                }
-                            }
-                        }
-                        break
-
-                    case 'exit':
-                        this.connected = false
-                        break
-                }
-            })
-
-            this.logger.info(`Connecting to tmux session: ${sessionName}`)
+            this.logger.info(`Connecting to local tmux session: ${sessionName}`)
 
         } catch (e) {
             this.logger.error('Error starting tmux:', e)
@@ -204,63 +151,86 @@ export class TmuxService {
         }
     }
 
-    /**
-     * Open a pane in a new tab
-     */
-    async openPaneTab(paneId: number): Promise<void> {
-        if (this.pendingPanes.has(paneId)) {
-            return
-        }
-        if (!this.session) {
-            throw new Error('Not connected to tmux')
+    private setupControllerEvents(context: SessionContext): void {
+        context.subscriptions.push(context.controller.events.subscribe(event => {
+            if (event.type === 'window-add' && event.windowId !== undefined) {
+                this.openWindowTab(context, event.windowId)
+            }
+            if (event.type === 'window-close' && event.windowId !== undefined) {
+                const tab = context.windowTabs.get(event.windowId)
+                if (tab) {
+                    tab.destroy()
+                    context.windowTabs.delete(event.windowId)
+                }
+            }
+            // If initialized, we should refresh to get initial windows
+            if (event.type === 'initialized') {
+                // The controller will trigger window-adds during refresh
+            }
+        }))
+    }
+
+    private async openWindowTab(context: SessionContext, windowId: number): Promise<void> {
+        if (context.windowTabs.has(windowId)) return
+
+        const tab = await this.appService.openNewTab({
+            type: TmuxWindowTabComponent as any,
+            inputs: {
+                existingController: context.controller,
+                profile: {
+                    sessionName: context.controller.getSessionName(),
+                    windowId
+                },
+            }
+        })
+
+        context.windowTabs.set(windowId, tab)
+
+        // Handle tab closure by user
+        context.subscriptions.push(tab.destroyed$.subscribe(() => {
+            context.windowTabs.delete(windowId)
+            // Optional: kill tmux window?
+        }))
+    }
+
+    async disconnectContext(context: SessionContext): Promise<void> {
+        this.sessions.delete(context)
+
+        context.subscriptions.forEach(s => s.unsubscribe())
+
+        await context.controller.destroy()
+
+        if (context.pty) {
+            context.pty.kill()
         }
 
-        this.pendingPanes.add(paneId)
-        try {
-            await this.appService.openNewTab({
-                type: TmuxPaneTabComponent as any,
-                inputs: {
-                    controller: this.session,
-                    paneId,
-                }
-            })
-        } finally {
-            this.pendingPanes.delete(paneId)
+        // Close all mapped tabs
+        for (const tab of context.windowTabs.values()) {
+            tab.destroy()
         }
+        context.windowTabs.clear()
+
+        this.logger.info('Disconnected tmux context')
     }
 
     /**
-     * Disconnect from tmux
+     * Disconnect from all sessions
      */
     async disconnect(): Promise<void> {
-        if (this.eventSubscription) {
-            this.eventSubscription.unsubscribe()
-            this.eventSubscription = null
+        for (const context of this.sessions) {
+            await this.disconnectContext(context)
         }
-        if (this.session) {
-            await this.session.destroy()
-            this.session = null
-        }
-        if (this.pty) {
-            this.pty.kill()
-            this.pty = null
-        }
-        this.connected = false
-        this.panes = []
-        this.buffer = ''
-        this.pendingPanes.clear()
-        this.logger.info('Disconnected from tmux')
     }
+
 
     /**
      * Attach to tmux from an existing terminal tab.
      * This sends `tmux -CC` to the terminal's session and parses the control mode output.
      */
+    /**
+     * Attach to tmux from an existing terminal tab.
+     */
     async attachToTerminal(terminalTab: BaseTerminalTabComponent<any>): Promise<void> {
-        if (this.connected) {
-            await this.disconnect()
-        }
-
         const session = terminalTab.session
         if (!session) {
             this.logger.error('Terminal tab has no session')
@@ -269,80 +239,49 @@ export class TmuxService {
 
         this.logger.info('Attaching tmux to existing terminal session')
 
+        const context: SessionContext = {
+            controller: null!, // Set below
+            terminalTab,
+            windowTabs: new Map(),
+            subscriptions: []
+        }
+
+        let buffer = ''
+
         // Create a controller that uses the terminal's session for I/O
-        this.session = new TmuxController(
+        context.controller = new TmuxController(
             this.logger,
             this.injector,
             (data: string) => session.write(Buffer.from(data)),
-            () => this.disconnect()
+            () => this.disconnectContext(context)
         )
 
         // Subscribe to the terminal's output to parse tmux control mode
-        const outputSubscription = session.output$.subscribe((data: string) => {
-            this.buffer += data
-            const lines = this.buffer.split('\n')
+        context.subscriptions.push(session.output$.subscribe((data: string) => {
+            buffer += data
+            const lines = buffer.split('\n')
             if (lines.length > 1) {
-                this.buffer = lines.pop()!
+                buffer = lines.pop()!
                 for (const line of lines) {
-                    this.session?.handleLine(line)
+                    context.controller.handleLine(line)
                 }
             }
-        })
+        }))
 
-        // Subscribe to controller events
-        this.eventSubscription = this.session.events.subscribe(event => {
-            this.logger.info('Event received:', event.type, event)
+        // Handle terminal tab closure
+        context.subscriptions.push(terminalTab.destroyed$.subscribe(() => {
+            this.logger.info('Attached terminal tab closed, disconnecting session')
+            this.disconnectContext(context)
+        }))
 
-            switch (event.type) {
-                case 'initialized':
-                case 'session-changed':
-                    this.connected = true
-                    this.logger.info('Connected to tmux session via terminal')
-                    // Replace the terminal tab with a TmuxWindowTabComponent
-                    this.replaceTabWithTmuxWindow(terminalTab)
-                    break
-
-                case 'pane-add':
-                    if (event.paneId !== undefined) {
-                        if (!this.panes.includes(event.paneId)) {
-                            this.panes = [...this.panes, event.paneId]
-                        }
-                    }
-                    break
-
-                case 'exit':
-                    this.connected = false
-                    outputSubscription.unsubscribe()
-                    break
-            }
-        })
+        this.sessions.add(context)
+        this.setupControllerEvents(context)
 
         // Send the tmux -CC command to the terminal
-        // -CC: control mode with command echo
-        // new -A -s default: create or attach to session named 'default'
         session.write(Buffer.from('tmux -CC new -A -s default\n'))
     }
 
-    /**
-     * Replace the terminal tab with a TmuxWindowTabComponent
-     */
-    private async replaceTabWithTmuxWindow(terminalTab: BaseTerminalTabComponent<any>): Promise<void> {
-        if (!this.session) return
+    // replaceTabWithTmuxWindow removed as we open new tabs for windows instead
 
-        // Open a new TmuxWindowTab with the existing controller
-        await this.appService.openNewTab({
-            type: TmuxWindowTabComponent as any,
-            inputs: {
-                existingController: this.session,
-                profile: { sessionName: this.session.getSessionName() },
-            }
-        })
-
-        // Close the original terminal tab
-        // Note: We delay slightly to ensure the new tab is ready
-        setTimeout(() => {
-            terminalTab.destroy()
-        }, 100)
-    }
 }
 
