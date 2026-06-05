@@ -24,8 +24,12 @@ export class TmuxPaneSession extends BaseSession {
         await this.controller.restorePaneHistory(this.paneId)
     }
 
-    resize(columns: number, rows: number): void {
-        this.controller.resizePane(this.paneId, columns, rows)
+    resize(_columns: number, _rows: number): void {
+        // Individual pane tabs must NOT send refresh-client -C directly.
+        // Instead, notify the controller that a pane's display dimensions changed.
+        // The TmuxSessionTabComponent subscribes to this and recalculates
+        // the total client size from ALL panes' actual xterm dimensions.
+        this.controller.onPaneDisplayResized()
     }
 
     write(data: Buffer): void {
@@ -99,6 +103,8 @@ export class TmuxController {
 
     public gateway: TmuxGateway
     public events = new Subject<{ type: string; paneId?: number; windowId?: number; data?: any }>()
+    /** Emitted when any pane's xterm.js display dimensions change (from fitAddon.fit) */
+    public paneDisplayResized$ = new Subject<void>()
 
     constructor(
         private logger: Logger,
@@ -312,6 +318,17 @@ export class TmuxController {
     hasPaneSession(paneId: number): boolean {
         return this.paneSessions.has(paneId)
     }
+
+    /**
+     * Called by TmuxPaneSession.resize() when xterm.js refits a pane.
+     * This signals that the actual display dimensions changed, so the
+     * TmuxSessionTabComponent should recalculate and send client size.
+     */
+    onPaneDisplayResized(): void {
+        this.paneDisplayResized$.next()
+    }
+
+
 
     // --- Pane Operations ---
 

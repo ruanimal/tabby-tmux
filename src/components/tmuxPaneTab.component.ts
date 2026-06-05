@@ -68,9 +68,9 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         this.setSession(paneSession, true)
 
         // Start the session (restores history) non-blocking.
-        // History will be written to the terminal via emitOutput → write().
-        // Since frontend.attach() already happened (via emitFocused() triggering
-        // setImmediate), the terminal is ready to receive output immediately.
+        // paneSession.start() will wait for the controller to have a
+        // valid client size before calling capture-pane, ensuring the
+        // output width matches the xterm display width.
         paneSession.start()
     }
 

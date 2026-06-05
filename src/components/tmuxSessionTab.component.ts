@@ -1,4 +1,4 @@
-import { Component, Injector, Input, OnInit, OnDestroy, ChangeDetectorRef } from '@angular/core'
+import { Component, Injector, Input, OnInit, OnDestroy, ChangeDetectorRef, ElementRef } from '@angular/core'
 import { Subscription } from 'rxjs'
 import { SplitTabComponent, SplitContainer, LogService, Logger, TabsService, HotkeysService } from 'tabby-core'
 import { TabRecoveryService } from 'tabby-core'
@@ -98,6 +98,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
     private logger: Logger
     private eventSubscription: Subscription | null = null
+    private paneResizeSubscription: Subscription | null = null
 
     // windowId → (paneId → paneTab)
     private windowPaneTabs = new Map<number, Map<number, TmuxPaneTabComponent>>()
@@ -109,12 +110,18 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     windowBarCollapsed = false
     private _initialized = false
     private _tabsService: TabsService
+    private _resizeHandler: (() => void) | null = null
+    private _resizeTimer: any = null
+    /** Last dimensions sent to tmux, for dedup */
+    private _lastSentCols = 0
+    private _lastSentRows = 0
 
     constructor(
         injector: Injector,
         private tmuxService: TmuxService,
         tabsService: TabsService,
         private cdr: ChangeDetectorRef,
+        private hostElement: ElementRef,
         log: LogService,
     ) {
         super(
@@ -144,6 +151,13 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             this.handleControllerEvent(event)
         })
 
+        // Subscribe to pane display resize events.
+        // Whenever any pane's xterm.js refits (due to container resize, window resize,
+        // spanner drag, layout sync, etc.), we recalculate the total client size.
+        this.paneResizeSubscription = this.controller.paneDisplayResized$.subscribe(() => {
+            this.scheduleRefreshClientSize()
+        })
+
         // Bootstrap from current controller snapshot in case early events were missed
         this.bootstrapFromControllerState()
     }
@@ -169,6 +183,14 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             if (firstWindowId !== undefined) {
                 this.switchToWindow(firstWindowId)
             }
+
+            // Listen for window resize events (like iTerm2's windowDidResize).
+            // Only fires when the browser window changes size, not during
+            // internal SplitTab layout operations. Debounced to avoid flooding.
+            this._resizeHandler = () => this.scheduleRefreshClientSize()
+            window.addEventListener('resize', this._resizeHandler)
+            // Initial size sync after pane mount
+            this.scheduleRefreshClientSize()
         })
     }
 
@@ -244,6 +266,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 if (event.windowId === this.activeWindowId && event.data?.layout) {
                     this.logger.info(`Syncing layout for window @${event.windowId}`)
                     this.syncLayout(event.data.layout)
+                    // NOTE: Do NOT call refreshClientSize here.
+                    // refresh-client -C causes tmux to re-layout, which sends
+                    // another %layout-change, creating an infinite loop.
                 }
                 break
 
@@ -287,7 +312,12 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         const paneMap = this.windowPaneTabs.get(windowId)!
 
         if (paneMap.size === 0) {
-            // First time visiting this window — create pane tabs
+            // First time visiting this window — send an approximate client size
+            // before creating panes so that capture-pane output is roughly correct.
+            // The precise size will be sent automatically when panes mount and
+            // their xterm.js fires resize (via paneDisplayResized$ subscription).
+            this.refreshClientSize()
+
             this.logger.info(`Creating panes for newly visited window @${windowId}`)
             await this.addPanesForWindow(windowId)
         } else {
@@ -319,8 +349,8 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             }
         }
 
-        // 6. Refresh tmux client size
-        this.refreshClientSize()
+        // 6. Detect changes; precise client size refresh will happen
+        //    automatically via paneDisplayResized$ when xterm.js fits to container.
         this.cdr.detectChanges()
     }
 
@@ -611,15 +641,243 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     }
 
     /**
-     * Refresh tmux client size to match current SplitTab dimensions.
+     * Refresh tmux client size based on actual pane dimensions.
+     *
+     * Strategy (following iTerm2's variableTmuxSize algorithm):
+     * 1. If panes have valid xterm dimensions: compute from the layout tree.
+     *    - Sum character widths across horizontal splits + add tmux dividers (1 char each)
+     *    - Sum character heights across vertical splits + add tmux dividers
+     *    - This is the most accurate because xterm.cols/rows already accounts for
+     *      scrollbar, padding, and all per-pane decorations.
+     * 2. Fallback (before panes mount): pixel-based approximation from .pane-area.
      */
     private refreshClientSize(): void {
-        if (this.controller) {
-            const size = (this as any).size
-            if (size) {
-                this.controller.resizePane(0, size.columns, size.rows)
+        if (!this.controller || !this._initialized) return
+        if (this.activeWindowId === null) return
+
+        let totalCols: number | null = null
+        let totalRows: number | null = null
+
+        // Try to compute from mounted panes + layout structure (most accurate)
+        const fromLayout = this.computeClientSizeFromLayout()
+        if (fromLayout) {
+            totalCols = fromLayout.cols
+            totalRows = fromLayout.rows
+        }
+
+        // Fallback: pixel-based measurement
+        if (totalCols === null || totalRows === null) {
+            const measured = this.measurePaneArea()
+            if (!measured) return
+            totalCols = measured.cols
+            totalRows = measured.rows
+        }
+
+        if (totalCols > 0 && totalRows > 0 &&
+            (totalCols !== this._lastSentCols || totalRows !== this._lastSentRows)) {
+            this._lastSentCols = totalCols
+            this._lastSentRows = totalRows
+            this.logger.info(`Setting tmux client size: ${totalCols}x${totalRows}`)
+            this.controller.resizePane(0, totalCols, totalRows)
+        }
+    }
+
+    /**
+     * Compute tmux client size from mounted panes' actual xterm dimensions.
+     *
+     * Uses the layout tree structure to correctly account for tmux dividers:
+     * - Horizontal split: total_cols = sum(child_cols) + (num_children - 1)
+     * - Vertical split: total_rows = sum(child_rows) + (num_children - 1)
+     *
+     * Falls back to summing all pane cols + dividers for simple layouts
+     * when no layout tree is available.
+     */
+    private computeClientSizeFromLayout(): { cols: number; rows: number } | null {
+        if (this.activeWindowId === null) return null
+        const paneMap = this.windowPaneTabs.get(this.activeWindowId)
+        if (!paneMap || paneMap.size === 0) return null
+
+        // Check that all panes have valid xterm dimensions
+        const paneDims = new Map<number, { cols: number; rows: number }>()
+        for (const [paneId, paneTab] of paneMap) {
+            const frontend = (paneTab as any).frontend
+            if (!frontend?.xterm?.cols || frontend.xterm.cols <= 0 ||
+                !frontend?.xterm?.rows || frontend.xterm.rows <= 0) {
+                // Not all panes ready yet
+                return null
+            }
+            paneDims.set(paneId, {
+                cols: frontend.xterm.cols,
+                rows: frontend.xterm.rows,
+            })
+        }
+
+        // Single pane: trivial
+        if (paneDims.size === 1) {
+            const dim = paneDims.values().next().value
+            return { cols: dim.cols, rows: dim.rows }
+        }
+
+        // Multi-pane: use the layout tree if available
+        const windowState = this.controller?.getWindowState(this.activeWindowId)
+        if (windowState?.layout) {
+            const layoutTree = parseTmuxLayout(windowState.layout)
+            if (layoutTree) {
+                const computed = this.computeSizeFromNode(layoutTree, paneDims)
+                if (computed) return computed
             }
         }
+
+        // Fallback for multi-pane without layout tree:
+        // Assume a simple horizontal split (most common)
+        let sumCols = 0
+        let maxRows = 0
+        for (const dim of paneDims.values()) {
+            sumCols += dim.cols
+            if (dim.rows > maxRows) maxRows = dim.rows
+        }
+        // Add tmux dividers: (numPanes - 1) vertical dividers, each 1 char wide
+        const clientCols = sumCols + (paneDims.size - 1)
+        return { cols: clientCols, rows: maxRows }
+    }
+
+    /**
+     * Recursively compute tmux window size from a layout tree node.
+     * For each container, sums children dimensions along split axis and
+     * adds 1-char tmux dividers between children.
+     */
+    private computeSizeFromNode(
+        node: TmuxLayoutNode,
+        paneDims: Map<number, { cols: number; rows: number }>
+    ): { cols: number; rows: number } | null {
+        if (node.type === 'pane' && node.paneId !== undefined) {
+            const dim = paneDims.get(node.paneId)
+            return dim || null
+        }
+
+        if (!node.children || node.children.length === 0) return null
+
+        const childSizes: { cols: number; rows: number }[] = []
+        for (const child of node.children) {
+            const size = this.computeSizeFromNode(child, paneDims)
+            if (!size) return null
+            childSizes.push(size)
+        }
+
+        const numDividers = childSizes.length - 1
+
+        if (node.type === 'horizontal') {
+            // Children side by side: sum widths + dividers, take max height
+            const totalCols = childSizes.reduce((s, c) => s + c.cols, 0) + numDividers
+            const totalRows = Math.min(...childSizes.map(c => c.rows))
+            return { cols: totalCols, rows: totalRows }
+        } else {
+            // Vertical: children stacked: take max width, sum heights + dividers
+            const totalCols = Math.min(...childSizes.map(c => c.cols))
+            const totalRows = childSizes.reduce((s, c) => s + c.rows, 0) + numDividers
+            return { cols: totalCols, rows: totalRows }
+        }
+    }
+
+    /**
+     * Pixel-based fallback for measuring client size before panes mount.
+     * Less accurate than xterm-based computation but provides an initial estimate.
+     *
+     * Accounts for:
+     * - Spanner (UI divider) pixel widths (10px each)
+     * - Per-pane scrollbar width (~14px per pane, estimated)
+     * - Tmux character dividers (+1 per split)
+     */
+    private measurePaneArea(): { cols: number; rows: number } | null {
+        const host = this.hostElement.nativeElement as HTMLElement
+        const paneArea = host.querySelector('.pane-area') ?? host
+        const rect = paneArea.getBoundingClientRect()
+        if (rect.width < 10 || rect.height < 10) return null
+
+        // Read char cell size from any mounted pane's xterm
+        let cellW = 0
+        let cellH = 0
+        for (const paneMap of this.windowPaneTabs.values()) {
+            for (const paneTab of paneMap.values()) {
+                const frontend = (paneTab as any).frontend
+                if (!frontend?.xtermCore) continue
+                const dims = frontend.xtermCore?._renderService?.dimensions
+                if (dims?.css?.cell?.width > 0 && dims?.css?.cell?.height > 0) {
+                    cellW = dims.css.cell.width
+                    cellH = dims.css.cell.height
+                    break
+                }
+                // Fallback: compute from xterm element
+                const xtermEl = frontend.xtermCore.element as HTMLElement | undefined
+                if (xtermEl && frontend.xterm.cols > 0 && frontend.xterm.rows > 0) {
+                    const r = xtermEl.getBoundingClientRect()
+                    if (r.width > 0 && r.height > 0) {
+                        cellW = r.width / frontend.xterm.cols
+                        cellH = r.height / frontend.xterm.rows
+                        break
+                    }
+                }
+            }
+            if (cellW > 0) break
+        }
+
+        // Fallback: default xterm cell size (conservative)
+        if (cellW <= 0) cellW = 9
+        if (cellH <= 0) cellH = 17
+
+        // Determine number of panes and splits for the active window
+        const paneMap = this.activeWindowId !== null
+            ? this.windowPaneTabs.get(this.activeWindowId)
+            : null
+        const paneCount = paneMap?.size ?? 1
+
+        // UI spanner pixel widths (10px each, from splitTabSpanner CSS)
+        const spannerPx = this._spanners.length * 10
+        // Estimated per-pane scrollbar width (xterm.js renders a scrollbar)
+        const scrollbarPxPerPane = 14
+        const totalScrollbarPx = paneCount * scrollbarPxPerPane
+
+        // Available pixels for character content
+        const availableWidth = rect.width - spannerPx - totalScrollbarPx
+        const availableHeight = rect.height
+
+        // Character cells that fit in the available space
+        const contentCols = Math.floor(availableWidth / cellW)
+        const contentRows = Math.floor(availableHeight / cellH)
+
+        // Add tmux dividers: for N panes in a row, tmux uses N-1 dividers (1 char each)
+        // For the approximate case, assume horizontal split
+        const numDividers = Math.max(0, paneCount - 1)
+        const clientCols = contentCols + numDividers
+
+        return {
+            cols: Math.max(2, clientCols),
+            rows: Math.max(1, contentRows),
+        }
+    }
+
+    /**
+     * Debounced version of refreshClientSize.
+     * Multiple sources (window resize, switchToWindow, layout-change) may
+     * fire close together — debounce into one refresh-client -C call.
+     */
+    private scheduleRefreshClientSize(): void {
+        if (this._resizeTimer) clearTimeout(this._resizeTimer)
+        this._resizeTimer = setTimeout(() => {
+            this._resizeTimer = null
+            this.refreshClientSize()
+        }, 150)
+    }
+
+    /**
+     * Override onSpannerAdjusted to notify tmux of layout change.
+     * When the user drags a spanner (split divider), the pane containers
+     * resize and xterm.js auto-fits. We need to tell tmux the new client size
+     * so it can recalculate its layout accordingly.
+     */
+    override onSpannerAdjusted(spanner: any): void {
+        super.onSpannerAdjusted(spanner)
+        this.scheduleRefreshClientSize()
     }
 
     // --- UI Event Handlers ---
@@ -645,6 +903,17 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     override ngOnDestroy(): void {
         if (this.eventSubscription) {
             this.eventSubscription.unsubscribe()
+        }
+        if (this.paneResizeSubscription) {
+            this.paneResizeSubscription.unsubscribe()
+        }
+        if (this._resizeHandler) {
+            window.removeEventListener('resize', this._resizeHandler)
+            this._resizeHandler = null
+        }
+        if (this._resizeTimer) {
+            clearTimeout(this._resizeTimer)
+            this._resizeTimer = null
         }
         super.ngOnDestroy()
     }
