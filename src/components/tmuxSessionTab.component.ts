@@ -75,19 +75,15 @@ export interface TmuxSessionProfile {
             position: relative;
             min-height: 0;
         }
-        /*
-         * SplitTab.layoutInternal() sets inline position/size styles on pane children
-         * (position:absolute; left/top/width/height in %). We need !important to
-         * override those inline styles so panes fill the flex pane-area instead.
-         */
+        /* SplitTab.layoutInternal() adds .child class and sets inline left/top/width/height % */
+        /* but position:absolute comes from CSS — must match inside pane-area */
         ::ng-deep .pane-area > .child {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            right: 0 !important;
-            bottom: 0 !important;
-            width: auto !important;
-            height: auto !important;
+            position: absolute;
+            transition: 0.125s all;
+            opacity: .75;
+        }
+        ::ng-deep .pane-area > .child.focused {
+            opacity: 1;
         }
         tmux-window-bar {
             flex: 0 0 auto;
