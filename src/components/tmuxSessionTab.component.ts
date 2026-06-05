@@ -325,6 +325,19 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     }
 
     /**
+     * Override focus to NOT blur other pane tabs.
+     * In tmux integration, all panes are visible simultaneously (split layout).
+     * SplitTab's default focus() blurs all other tabs, which prevents their
+     * xterm frontends from initializing.
+     */
+    override focus(tab: any): void {
+        ;(this as any).focusedTab = tab
+        tab.emitFocused()
+        // DO NOT blur other tabs — they all need to remain initialized
+        // to display their terminal content simultaneously.
+    }
+
+    /**
      * Detach a pane tab's view from the ViewContainer without calling
      * removeTab() which would trigger self-destruction when root empties.
      */
@@ -438,7 +451,8 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             } else {
                 await this.addTab(paneTab as any, existingTabs[existingTabs.length - 1] as any, 'r')
             }
-            ;(paneTab as any).emitVisibility(true)
+            (paneTab as any).emitVisibility(true)
+            (paneTab as any).emitFocused()
 
             // Re-sync layout
             const windowState = this.controller.getWindowState(windowId)

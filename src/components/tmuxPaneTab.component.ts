@@ -30,10 +30,28 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         }
         this.setTitle(`Pane %${this.paneId}`)
 
-        // Now call parent's ngOnInit to set up the frontend
+        // Now call parent's ngOnInit to set up the frontend.
+        // NOTE: super.ngOnInit() schedules a setImmediate that checks
+        // this.hasFocus to decide whether to attach the xterm frontend.
+        // BaseTabComponent sets hasFocus=true on focused$.next().
+        // We emit focus synchronously right after super.ngOnInit() so that
+        // when setImmediate fires, hasFocus is already true.
         super.ngOnInit()
 
-        // Initialize our session after the frontend is ready
+        // Mark this tab as focused so the setImmediate in super.ngOnInit
+        // will attach the frontend to the DOM element.
+        // This is safe because our overridden focus() doesn't blur siblings.
+        this.emitFocused()
+
+        // Initialize our session AFTER emitting focus, so that:
+        // 1. frontend.attach() runs via setImmediate (because hasFocus=true)
+        // 2. frontend.resize$ fires, which triggers releaseInitialDataBuffer()
+        // 3. Then session.start() populates the buffer and it gets released
+        //
+        // The key insight: setImmediate fires before our async session.start(),
+        // so the frontend is attached before history restore begins. This means
+        // history output goes directly to the terminal, not into a buffer that
+        // gets flushed in a bulk dump.
         this.initializeSession()
     }
 
@@ -44,24 +62,16 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
 
         // Create the pane session
         const paneSession = new TmuxPaneSession(this.logger, this.controller, this.paneId)
-        await paneSession.start()
 
-        // Use the parent class's setSession method - this properly binds:
-        // - session.output$ -> this.write() (display output)
-        // - frontend.input$ -> session.feedFromTerminal() (user input)
-        // - session.closed$ -> tab close handling
-        // - resize events
-        //
-        // IMPORTANT: BaseTerminalTabComponent will automatically call
-        // session.releaseInitialDataBuffer() when the frontend is ready
-        // (see BaseTerminalTabComponent.ngOnInit, line 398 in tabby-terminal),
-        // so we DON'T need to do it manually here.
+        // Set up the terminal session first so the frontend is wired.
+        // This binds session.output$ → this.write() and frontend → session.
         this.setSession(paneSession, true)
 
-        // If the frontend is already ready and we have a size, send an initial resize
-        if (this.frontendIsReady && this.size) {
-            paneSession.resize(this.size.columns, this.size.rows)
-        }
+        // Start the session (restores history) non-blocking.
+        // History will be written to the terminal via emitOutput → write().
+        // Since frontend.attach() already happened (via emitFocused() triggering
+        // setImmediate), the terminal is ready to receive output immediately.
+        paneSession.start()
     }
 
     // Override generic title behavior
