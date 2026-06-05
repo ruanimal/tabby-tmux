@@ -5,8 +5,8 @@
  * - Checksum,WxH,X,Y<content>
  * - Content can be:
  *   - Just a pane ID: "93x52,0,0,185"
- *   - Horizontal split [...]: contains comma-separated panes/containers
- *   - Vertical split {...}: contains comma-separated panes/containers
+ *   - Vertical split [...]: contains comma-separated panes stacked top-to-bottom
+ *   - Horizontal split {...}: contains comma-separated panes arranged left-to-right
  *
  * Example: "41e9,279x71,0,0[279x40,0,0,71,279x30,0,41{147x30,0,41,72,131x30,148,41,73}]"
  */
@@ -79,7 +79,7 @@ function parseNode(str: string, start: number): ParseResult {
     const nextChar = str[pos]
 
     if (nextChar === '[') {
-        // Horizontal split
+        // Vertical split (top-to-bottom) — tmux [...] = panes stacked vertically
         pos++ // skip '['
         const children: TmuxLayoutNode[] = []
         while (str[pos] !== ']') {
@@ -92,11 +92,11 @@ function parseNode(str: string, start: number): ParseResult {
         }
         pos++ // skip ']'
         return {
-            node: { type: 'horizontal', x, y, width, height, children },
+            node: { type: 'vertical', x, y, width, height, children },
             consumed: pos
         }
     } else if (nextChar === '{') {
-        // Vertical split
+        // Horizontal split (left-to-right) — tmux {...} = panes side by side
         pos++ // skip '{'
         const children: TmuxLayoutNode[] = []
         while (str[pos] !== '}') {
@@ -109,7 +109,7 @@ function parseNode(str: string, start: number): ParseResult {
         }
         pos++ // skip '}'
         return {
-            node: { type: 'vertical', x, y, width, height, children },
+            node: { type: 'horizontal', x, y, width, height, children },
             consumed: pos
         }
     } else if (nextChar === ',' || nextChar === ']' || nextChar === '}' || pos >= str.length) {
