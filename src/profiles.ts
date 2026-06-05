@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core'
 import { ProfileProvider, Profile, NewTabParameters } from 'tabby-core'
 import { BaseTabComponent } from 'tabby-core'
-import { TmuxWindowTabComponent, TmuxWindowProfile } from './components/tmuxWindowTab.component'
+import { TmuxSessionTabComponent, TmuxSessionProfile } from './components/tmuxSessionTab.component'
 
 export interface TmuxProfile extends Profile {
     type: 'tmux'
@@ -39,6 +39,7 @@ export class TmuxProfileProvider extends ProfileProvider<TmuxProfile> {
                 isBuiltin: true,
                 isTemplate: false,
                 disableDynamicTitle: false,
+                behaviorOnSessionEnd: 'keep',
             },
         ]
     }
@@ -56,18 +57,19 @@ export class TmuxProfileProvider extends ProfileProvider<TmuxProfile> {
             isBuiltin: false,
             isTemplate: false,
             disableDynamicTitle: false,
+            behaviorOnSessionEnd: 'keep',
         }
     }
 
     async getNewTabParameters(profile: TmuxProfile): Promise<NewTabParameters<BaseTabComponent>> {
-        const windowProfile: TmuxWindowProfile = {
+        const sessionProfile: TmuxSessionProfile = {
             sessionName: profile.options?.sessionName || 'default',
         }
 
         return {
-            type: TmuxWindowTabComponent,
+            type: TmuxSessionTabComponent,
             inputs: {
-                profile: windowProfile,
+                profile: sessionProfile,
             },
         }
     }

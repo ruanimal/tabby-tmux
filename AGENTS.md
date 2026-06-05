@@ -22,10 +22,16 @@ TmuxController (src/session.ts)
 ├── windowStates: Map<windowId, WindowState>
 └── events: Subject — pane-add, window-add, layout-change, exit...
 
-TmuxWindowTabComponent (src/components/tmuxWindowTab.component.ts)
+TmuxSessionTabComponent (src/components/tmuxSessionTab.component.ts)
 ├── 继承 SplitTabComponent
-├── paneTabMap: Map<paneId, TmuxPaneTabComponent>
+├── windowPaneTabs: Map<windowId, Map<paneId, TmuxPaneTabComponent>>
+├── switchToWindow() — 切换 window（removeTab/addTab 隐藏/显示 pane）
 └── syncLayout() — 同步 tmux layout 到 SplitTab
+
+TmuxWindowBarComponent (src/components/tmuxWindowBar.component.ts)
+├── 底部可折叠的 tmux window 栏
+├── 显示所有 window 按钮，当前活跃的高亮
+└── 支持新建 window、断开连接、折叠/展开
 
 TmuxPaneTabComponent (src/components/tmuxPaneTab.component.ts)
 ├── 继承 BaseTerminalTabComponent
@@ -42,7 +48,7 @@ TmuxPaneTabComponent (src/components/tmuxPaneTab.component.ts)
 tmux 输出 → PTY → controller.handleLine()
   → gateway.executeLine() → 解析协议
   → %output → paneSession.emitOutput()
-  → %layout-change → event → WindowTab.syncLayout()
+  → %layout-change → event → SessionTab.syncLayout()
 ```
 
 ### 注册入口 (src/index.ts)

@@ -446,6 +446,19 @@ export class TmuxController {
         const state = this.windowStates.get(windowId)
         return state ? Array.from(state.panes) : []
     }
+
+    getWindowState(windowId: number): WindowState | undefined {
+        return this.windowStates.get(windowId)
+    }
+
+    getAllWindowStates(): WindowState[] {
+        return Array.from(this.windowStates.values())
+    }
+
+    getFirstWindowId(): number | undefined {
+        const first = this.windowStates.keys().next()
+        return first.done ? undefined : first.value
+    }
 }
 
 // Re-export for backwards compatibility

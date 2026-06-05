@@ -6,7 +6,8 @@ import { TmuxCommandProvider } from './buttonProvider'
 import { TmuxProfileProvider } from './profiles'
 import { TmuxContextMenuProvider } from './tabContextMenu'
 import { TmuxPaneTabComponent } from './components/tmuxPaneTab.component'
-import { TmuxWindowTabComponent } from './components/tmuxWindowTab.component'
+import { TmuxSessionTabComponent } from './components/tmuxSessionTab.component'
+import { TmuxWindowBarComponent } from './components/tmuxWindowBar.component'
 
 @NgModule({
     imports: [
@@ -21,11 +22,12 @@ import { TmuxWindowTabComponent } from './components/tmuxWindowTab.component'
     ],
     declarations: [
         TmuxPaneTabComponent,
-        TmuxWindowTabComponent,
+        TmuxSessionTabComponent,
+        TmuxWindowBarComponent,
     ],
     entryComponents: [
         TmuxPaneTabComponent,
-        TmuxWindowTabComponent,
+        TmuxSessionTabComponent,
     ],
 })
 export default class TmuxModule { }

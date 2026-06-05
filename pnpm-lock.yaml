@@ -23,15 +23,9 @@ importers:
       rxjs:
         specifier: ^7
         version: 7.8.2
-      tabby-core:
-        specifier: '*'
-        version: 1.0.163(a470613752b2d241c0eca1859bdeb231)
       tabby-settings:
         specifier: '*'
-        version: 1.0.163(0f21c65e019047bb7c5f93368925b769)
-      tabby-terminal:
-        specifier: '*'
-        version: 1.0.163(0c1cc87514c42a0cf072e20efd28cfc0)
+        version: 1.0.163(3fe6c5cebb421296a2d4fb0c355a8cc6)
     devDependencies:
       '@angular/compiler':
         specifier: ^15.2.10
@@ -63,9 +57,15 @@ importers:
       svg-inline-loader:
         specifier: ^0.8.2
         version: 0.8.2
+      tabby-core:
+        specifier: 1.0.231-nightly.0
+        version: 1.0.231-nightly.0(a470613752b2d241c0eca1859bdeb231)
       tabby-local:
-        specifier: 1.0.197-nightly.1
-        version: 1.0.197-nightly.1(09c2bca895ea97e990e475ed6385d688)
+        specifier: 1.0.231-nightly.0
+        version: 1.0.231-nightly.0(b662cdb7de59522a6dfd5157d0a917bf)
+      tabby-terminal:
+        specifier: 1.0.231-nightly.0
+        version: 1.0.231-nightly.0(f1cfe51b7cbf9a905af8d3792d14a3ed)
       to-string-loader:
         specifier: ^1.2.0
         version: 1.2.0
@@ -1090,19 +1090,19 @@ packages:
   svg-inline-loader@0.8.2:
     resolution: {integrity: sha512-kbrcEh5n5JkypaSC152eGfGcnT4lkR0eSfvefaUJkLqgGjRQJyKDvvEE/CCv5aTSdfXuc+N98w16iAojhShI3g==}
 
-  tabby-core@1.0.163:
-    resolution: {integrity: sha512-zJgX/WsvCcHK0yvwaLmSAombDf4Dpgv8++wUbJ6LREQlw40aJZ9cQs7aeaXAa6/Mcuv1MCrN4e4gARuniZhS3A==}
+  tabby-core@1.0.231-nightly.0:
+    resolution: {integrity: sha512-CpOLTw9XWLeSJoAXGf6CIH1m5DULvmNTIncy0n0n8PAewQZmhMf5JYMzwiBzey+54LDZ/yit9aBRgat7yGx+Eg==}
     peerDependencies:
-      '@angular/animations': ^9.1.9
-      '@angular/common': ^9.1.11
-      '@angular/core': ^9.1.9
-      '@angular/forms': ^9.1.11
-      '@angular/platform-browser': ^9.1.11
-      '@angular/platform-browser-dynamic': ^9.1.11
-      rxjs: ^6.6.3
+      '@angular/animations': ^15
+      '@angular/common': ^15
+      '@angular/core': ^15
+      '@angular/forms': ^15
+      '@angular/platform-browser': ^15
+      '@angular/platform-browser-dynamic': ^15
+      rxjs: ^7
 
-  tabby-local@1.0.197-nightly.1:
-    resolution: {integrity: sha512-gPxTIK0CbnGirEMQ8rWYTjPRNxJPYWV5ciiqErH6ALr7jGAdckqm7wDUN8rbrpAKrEB94+srMT6pTbSDdNy/nA==}
+  tabby-local@1.0.231-nightly.0:
+    resolution: {integrity: sha512-pY9grSHbhhwuIb17fjVmteUSpf7YkXIxyyIB3JcHxr3MTl2R2mD0NgrOuSqU9NxOwynmcEI9V7Rik56ZyI9TfA==}
     peerDependencies:
       '@angular/animations': ^15
       '@angular/common': ^15
@@ -1127,16 +1127,16 @@ packages:
       rxjs: ^6.5.5
       tabby-core: '*'
 
-  tabby-terminal@1.0.163:
-    resolution: {integrity: sha512-S8rptbyBGvM/Ek+X/uUzwBRWdgyJwdSmiypJU05g2JnPyMKOPB96AMD9za4xP4avqs090tiaCdCFQb7bCwjOfw==}
+  tabby-terminal@1.0.231-nightly.0:
+    resolution: {integrity: sha512-Ou2b0VVai+B5nL1g0BEmxE0OeB6HmTCaqFgnooZj9ffeohyUwdzfklOimE2a6Huvdb7g8eSp4sWACw5L4botwQ==}
     peerDependencies:
-      '@angular/animations': ^9.1.9
-      '@angular/common': ^9.1.11
-      '@angular/core': ^9.1.9
-      '@angular/forms': ^9.1.11
-      '@angular/platform-browser': ^9.1.11
-      '@ng-bootstrap/ng-bootstrap': ^6.1.0
-      rxjs: ^6.5.5
+      '@angular/animations': ^15
+      '@angular/common': ^15
+      '@angular/core': ^15
+      '@angular/forms': ^15
+      '@angular/platform-browser': ^15
+      '@ng-bootstrap/ng-bootstrap': ^14
+      rxjs: ^7
       tabby-core: '*'
       tabby-settings: '*'
 
@@ -2195,7 +2195,7 @@ snapshots:
       object-assign: 4.1.1
       simple-html-tokenizer: 0.1.1
 
-  tabby-core@1.0.163(a470613752b2d241c0eca1859bdeb231):
+  tabby-core@1.0.231-nightly.0(a470613752b2d241c0eca1859bdeb231):
     dependencies:
       '@angular/common': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
       '@angular/core': 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
@@ -2204,7 +2204,7 @@ snapshots:
       '@angular/platform-browser-dynamic': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))
       rxjs: 7.8.2
 
-  tabby-local@1.0.197-nightly.1(09c2bca895ea97e990e475ed6385d688):
+  tabby-local@1.0.231-nightly.0(b662cdb7de59522a6dfd5157d0a917bf):
     dependencies:
       '@angular/common': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
       '@angular/core': 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
@@ -2212,11 +2212,11 @@ snapshots:
       '@angular/platform-browser': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
       '@ng-bootstrap/ng-bootstrap': 14.2.0(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2))(@angular/localize@15.2.10(@angular/compiler-cli@15.2.10(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(typescript@4.9.5))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))))(@popperjs/core@2.11.8)(rxjs@7.8.2)
       rxjs: 7.8.2
-      tabby-core: 1.0.163(a470613752b2d241c0eca1859bdeb231)
-      tabby-settings: 1.0.163(0f21c65e019047bb7c5f93368925b769)
-      tabby-terminal: 1.0.163(0c1cc87514c42a0cf072e20efd28cfc0)
+      tabby-core: 1.0.231-nightly.0(a470613752b2d241c0eca1859bdeb231)
+      tabby-settings: 1.0.163(3fe6c5cebb421296a2d4fb0c355a8cc6)
+      tabby-terminal: 1.0.231-nightly.0(f1cfe51b7cbf9a905af8d3792d14a3ed)
 
-  tabby-settings@1.0.163(0f21c65e019047bb7c5f93368925b769):
+  tabby-settings@1.0.163(3fe6c5cebb421296a2d4fb0c355a8cc6):
     dependencies:
       '@angular/common': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
       '@angular/core': 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
@@ -2224,9 +2224,9 @@ snapshots:
       '@angular/platform-browser': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
       '@ng-bootstrap/ng-bootstrap': 14.2.0(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2))(@angular/localize@15.2.10(@angular/compiler-cli@15.2.10(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(typescript@4.9.5))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))))(@popperjs/core@2.11.8)(rxjs@7.8.2)
       rxjs: 7.8.2
-      tabby-core: 1.0.163(a470613752b2d241c0eca1859bdeb231)
+      tabby-core: 1.0.231-nightly.0(a470613752b2d241c0eca1859bdeb231)
 
-  tabby-terminal@1.0.163(0c1cc87514c42a0cf072e20efd28cfc0):
+  tabby-terminal@1.0.231-nightly.0(f1cfe51b7cbf9a905af8d3792d14a3ed):
     dependencies:
       '@angular/common': 15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
       '@angular/core': 15.2.10(rxjs@7.8.2)(zone.js@0.13.3)
@@ -2234,8 +2234,8 @@ snapshots:
       '@angular/platform-browser': 15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))
       '@ng-bootstrap/ng-bootstrap': 14.2.0(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/forms@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(@angular/platform-browser@15.2.10(@angular/common@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(rxjs@7.8.2))(@angular/localize@15.2.10(@angular/compiler-cli@15.2.10(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3)))(typescript@4.9.5))(@angular/compiler@15.2.10(@angular/core@15.2.10(rxjs@7.8.2)(zone.js@0.13.3))))(@popperjs/core@2.11.8)(rxjs@7.8.2)
       rxjs: 7.8.2
-      tabby-core: 1.0.163(a470613752b2d241c0eca1859bdeb231)
-      tabby-settings: 1.0.163(0f21c65e019047bb7c5f93368925b769)
+      tabby-core: 1.0.231-nightly.0(a470613752b2d241c0eca1859bdeb231)
+      tabby-settings: 1.0.163(3fe6c5cebb421296a2d4fb0c355a8cc6)
 
   tapable@2.3.0: {}
 

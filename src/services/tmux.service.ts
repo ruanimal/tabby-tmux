@@ -1,21 +1,21 @@
 import { Injectable, Injector } from '@angular/core'
-import { AppService, LogService, Logger, SelectorService, SelectorOption, BaseTabComponent } from 'tabby-core'
+import { AppService, LogService, Logger, SelectorService, SelectorOption } from 'tabby-core'
 import { PTYInterface, PTYProxy } from 'tabby-local'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { Subscription } from 'rxjs'
 import { TmuxController } from '../session'
 
-import { TmuxWindowTabComponent } from '../components/tmuxWindowTab.component'
+import { TmuxSessionTabComponent } from '../components/tmuxSessionTab.component'
 
 /**
  * TmuxService manages the tmux integration and provides a way to show the tmux session selector.
- * It replaces the need for a dedicated TmuxTabComponent tab.
+ * Each connected tmux session is represented by a single TmuxSessionTabComponent.
  */
 interface SessionContext {
     controller: TmuxController
     pty?: PTYProxy
     terminalTab?: BaseTerminalTabComponent<any>
-    windowTabs: Map<number, BaseTabComponent>
+    sessionTab?: TmuxSessionTabComponent
     subscriptions: Subscription[]
 }
 
@@ -97,7 +97,6 @@ export class TmuxService {
             const context: SessionContext = {
                 controller: null!, // Set below
                 pty,
-                windowTabs: new Map(),
                 subscriptions: []
             }
 
@@ -153,43 +152,31 @@ export class TmuxService {
 
     private setupControllerEvents(context: SessionContext): void {
         context.subscriptions.push(context.controller.events.subscribe(event => {
-            if (event.type === 'window-add' && event.windowId !== undefined) {
-                this.openWindowTab(context, event.windowId)
-            }
-            if (event.type === 'window-close' && event.windowId !== undefined) {
-                const tab = context.windowTabs.get(event.windowId)
-                if (tab) {
-                    tab.destroy()
-                    context.windowTabs.delete(event.windowId)
-                }
-            }
-            // If initialized, we should refresh to get initial windows
-            if (event.type === 'initialized') {
-                // The controller will trigger window-adds during refresh
+            // On initialized, open the session tab if not already open
+            if (event.type === 'initialized' && !context.sessionTab) {
+                this.openSessionTab(context)
             }
         }))
     }
 
-    private async openWindowTab(context: SessionContext, windowId: number): Promise<void> {
-        if (context.windowTabs.has(windowId)) return
+    private async openSessionTab(context: SessionContext): Promise<void> {
+        if (context.sessionTab) return
 
-        const tab = await this.appService.openNewTab({
-            type: TmuxWindowTabComponent as any,
+        const tab = this.appService.openNewTab({
+            type: TmuxSessionTabComponent as any,
             inputs: {
                 existingController: context.controller,
                 profile: {
                     sessionName: context.controller.getSessionName(),
-                    windowId
                 },
             }
-        })
+        }) as any as TmuxSessionTabComponent
 
-        context.windowTabs.set(windowId, tab)
+        context.sessionTab = tab
 
         // Handle tab closure by user
         context.subscriptions.push(tab.destroyed$.subscribe(() => {
-            context.windowTabs.delete(windowId)
-            // Optional: kill tmux window?
+            context.sessionTab = undefined
         }))
     }
 
@@ -204,11 +191,11 @@ export class TmuxService {
             context.pty.kill()
         }
 
-        // Close all mapped tabs
-        for (const tab of context.windowTabs.values()) {
-            tab.destroy()
+        // Close session tab if open
+        if (context.sessionTab) {
+            context.sessionTab.destroy()
+            context.sessionTab = undefined
         }
-        context.windowTabs.clear()
 
         this.logger.info('Disconnected tmux context')
     }
@@ -242,7 +229,6 @@ export class TmuxService {
         const context: SessionContext = {
             controller: null!, // Set below
             terminalTab,
-            windowTabs: new Map(),
             subscriptions: []
         }
 
