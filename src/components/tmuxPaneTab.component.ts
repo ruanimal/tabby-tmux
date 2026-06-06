@@ -12,6 +12,16 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     @Input() controller: TmuxController
     @Input() paneId: number
 
+    /**
+     * Whether this pane is the active (keyboard-focused) pane in the tmux session.
+     * Controls whether hotkey-triggered input (e.g. Ctrl+C, paste) is forwarded.
+     *
+     * All tmux pane tabs have `hasFocus = true` simultaneously (needed for
+     * xterm frontend initialization), but only one pane should process hotkeys.
+     * This flag is managed by TmuxSessionTabComponent.focus().
+     */
+    _tmuxActive = true
+
     constructor(injector: Injector) {
         super(injector)
         // Don't initialize profile here - paneId is not yet available
@@ -72,6 +82,31 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         // valid client size before calling capture-pane, ensuring the
         // output width matches the xterm display width.
         paneSession.start()
+    }
+
+    /**
+     * Guard sendInput so that only the active pane forwards hotkey-triggered
+     * input (Ctrl+C, Home, End, etc.) to its tmux session.
+     *
+     * Normal terminal input from xterm (frontend.input$) also goes through
+     * sendInput(), but only the pane with actual DOM focus generates xterm
+     * input events, so this guard is safe.
+     */
+    override sendInput(data: string | Buffer): void {
+        if (!this._tmuxActive) {
+            return
+        }
+        super.sendInput(data)
+    }
+
+    /**
+     * Guard paste so that only the active pane pastes into its tmux session.
+     */
+    override async paste(): Promise<void> {
+        if (!this._tmuxActive) {
+            return
+        }
+        return super.paste()
     }
 
     // Override generic title behavior

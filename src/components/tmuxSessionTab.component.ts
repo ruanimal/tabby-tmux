@@ -355,16 +355,25 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     }
 
     /**
-     * Override focus to NOT blur other pane tabs.
-     * In tmux integration, all panes are visible simultaneously (split layout).
-     * SplitTab's default focus() blurs all other tabs, which prevents their
-     * xterm frontends from initializing.
+     * Override focus to manage which pane is the active (hotkey-target) pane.
+     *
+     * In tmux integration, all panes are visible simultaneously (split layout),
+     * so we cannot blur other tabs (that would prevent their xterm frontends
+     * from staying initialized). Instead, all pane tabs keep `hasFocus = true`
+     * for frontend initialization, and we use `TmuxPaneTabComponent._tmuxActive`
+     * to control which pane processes hotkeys.
      */
     override focus(tab: any): void {
         ;(this as any).focusedTab = tab
         tab.emitFocused()
-        // DO NOT blur other tabs — they all need to remain initialized
-        // to display their terminal content simultaneously.
+        // Mark only the focused pane as active for hotkey routing.
+        // Other panes remain visible and initialized but won't process
+        // hotkey-triggered input (Ctrl+C, paste, etc.).
+        for (const t of this.getAllTabs()) {
+            if (t instanceof TmuxPaneTabComponent) {
+                t._tmuxActive = (t === tab)
+            }
+        }
     }
 
     /**
