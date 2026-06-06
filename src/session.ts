@@ -25,11 +25,17 @@ export class TmuxPaneSession extends BaseSession {
     }
 
     resize(_columns: number, _rows: number): void {
-        // Individual pane tabs must NOT send refresh-client -C directly.
-        // Instead, notify the controller that a pane's display dimensions changed.
-        // The TmuxSessionTabComponent subscribes to this and recalculates
-        // the total client size from ALL panes' actual xterm dimensions.
-        this.controller.onPaneDisplayResized()
+        // No-op by design. In tmux integration, tmux is authoritative over the
+        // cell grid: each pane's character size comes from the %layout-change
+        // string and is applied via TmuxPaneTabComponent.setTmuxGrid().
+        //
+        // The xterm frontend's automatic fit-to-container resizing is disabled
+        // for tmux panes (frontend.enableResizing = false), so this method
+        // should normally never be called. Sending refresh-client -C from here
+        // would re-introduce the resize feedback loop (pane refit → client
+        // size → tmux relayout → pane refit → ...), so we deliberately do
+        // nothing. Overall client size is driven only by the container size
+        // in TmuxSessionTabComponent.refreshClientSize().
     }
 
     write(data: Buffer): void {
@@ -103,8 +109,6 @@ export class TmuxController {
 
     public gateway: TmuxGateway
     public events = new Subject<{ type: string; paneId?: number; windowId?: number; data?: any }>()
-    /** Emitted when any pane's xterm.js display dimensions change (from fitAddon.fit) */
-    public paneDisplayResized$ = new Subject<void>()
 
     constructor(
         private logger: Logger,
@@ -318,19 +322,6 @@ export class TmuxController {
     hasPaneSession(paneId: number): boolean {
         return this.paneSessions.has(paneId)
     }
-
-    /**
-     * Called by TmuxPaneSession.resize() when xterm.js refits a pane.
-     * This signals that the actual display dimensions changed, so the
-     * TmuxSessionTabComponent should recalculate and send client size.
-     */
-    onPaneDisplayResized(): void {
-        this.paneDisplayResized$.next()
-    }
-
-
-
-    // --- Pane Operations ---
 
     resizePane(_paneId: number, columns: number, rows: number): void {
         // Use refresh-client -C to set client size

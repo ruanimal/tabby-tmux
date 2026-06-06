@@ -2,3 +2,4 @@
 node_modules/
 note.local.md
 .vfox.toml
+.vfox/

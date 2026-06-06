@@ -1,4 +1,5 @@
 import { Component, Injector, Input, OnInit } from '@angular/core'
+import { first } from 'rxjs'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { TmuxController, TmuxPaneSession } from '../session'
 
@@ -21,6 +22,12 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
      * This flag is managed by TmuxSessionTabComponent.focus().
      */
     _tmuxActive = true
+
+    /** Desired tmux grid size (chars). tmux is authoritative over the cell grid. */
+    private _tmuxCols = 0
+    private _tmuxRows = 0
+    /** Whether the xterm frontend has been attached and is ready. */
+    private _frontendReady = false
 
     constructor(injector: Injector) {
         super(injector)
@@ -63,6 +70,57 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         // history output goes directly to the terminal, not into a buffer that
         // gets flushed in a bulk dump.
         this.initializeSession()
+
+        // tmux owns the cell grid. Once the frontend is ready, neutralize
+        // xterm's automatic fit-to-container so the pane never overrides the
+        // tmux-dictated grid with its own (pixel-rounded) size — that mismatch
+        // is what causes off-by-one wrapping / cursor errors. The grid is set
+        // explicitly via setTmuxGrid() from the layout sync instead.
+        this.frontendReady$.pipe(first()).subscribe(() => {
+            this._frontendReady = true
+            const frontend = this.frontend as any
+            if (frontend) {
+                frontend.enableResizing = false
+                // The frontend's resizeHandler (window resize + ResizeObserver)
+                // calls fitAddon.fit() unconditionally and ignores enableResizing.
+                // Replace fit() with a no-op so the grid stays exactly what tmux
+                // tells us. Keep a reference in case we ever need to restore it.
+                if (frontend.fitAddon && typeof frontend.fitAddon.fit === 'function') {
+                    frontend.fitAddon.fit = () => { /* tmux-authoritative: no auto-fit */ }
+                }
+            }
+            // Apply any grid size that arrived before the frontend was ready.
+            if (this._tmuxCols > 0 && this._tmuxRows > 0) {
+                this.applyTmuxGrid()
+            }
+        })
+    }
+
+    /**
+     * Set the authoritative cell grid for this pane, as dictated by the tmux
+     * layout string. tmux decides each pane's exact character width/height, so
+     * we resize the xterm grid to match instead of letting xterm fit to pixels.
+     * This keeps wrapping aligned with tmux and removes the resize feedback loop.
+     */
+    setTmuxGrid(cols: number, rows: number): void {
+        if (cols <= 0 || rows <= 0) return
+        if (cols === this._tmuxCols && rows === this._tmuxRows) return
+        this._tmuxCols = cols
+        this._tmuxRows = rows
+        if (this._frontendReady) {
+            this.applyTmuxGrid()
+        }
+    }
+
+    private applyTmuxGrid(): void {
+        const xterm = (this.frontend as any)?.xterm
+        if (!xterm) return
+        if (xterm.cols === this._tmuxCols && xterm.rows === this._tmuxRows) return
+        try {
+            xterm.resize(this._tmuxCols, this._tmuxRows)
+        } catch (e) {
+            this.logger.warn(`Failed to resize pane %${this.paneId} grid`, e)
+        }
     }
 
     async initializeSession(): Promise<void> {
@@ -78,9 +136,7 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         this.setSession(paneSession, true)
 
         // Start the session (restores history) non-blocking.
-        // paneSession.start() will wait for the controller to have a
-        // valid client size before calling capture-pane, ensuring the
-        // output width matches the xterm display width.
+        // History is written to the terminal via emitOutput → write().
         paneSession.start()
     }
 
