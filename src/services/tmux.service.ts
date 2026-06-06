@@ -1,10 +1,39 @@
 import { Injectable, Injector } from '@angular/core'
 import { AppService, LogService, Logger } from 'tabby-core'
-import { BaseTerminalTabComponent } from 'tabby-terminal'
-import { Subscription } from 'rxjs'
+import { BaseTerminalTabComponent, SessionMiddleware } from 'tabby-terminal'
+import { Subject, Subscription } from 'rxjs'
 import { TmuxController } from '../session'
 
 import { TmuxSessionTabComponent } from '../components/tmuxSessionTab.component'
+
+/**
+ * Middleware inserted at position 0 of the original session's middleware chain
+ * when entering tmux mode.  It captures raw output data for the tmux gateway
+ * and BLOCKS it from propagating further, so that other middleware plugins
+ * (e.g. trzsz) on the original session do not see tmux control mode data.
+ *
+ * Without this interceptor, trzsz middleware on the original session would
+ * detect trzsz protocol markers embedded in %output lines and trigger
+ * chooseSendFiles() a second time ("double file dialog" bug).
+ */
+class TmuxOutputInterceptor extends SessionMiddleware {
+    private _rawOutput = new Subject<Buffer>()
+    /** Raw session output, before any middleware processing */
+    rawOutput$ = this._rawOutput.asObservable()
+
+    feedFromSession (data: Buffer): void {
+        // Capture raw data for the tmux gateway
+        this._rawOutput.next(data)
+        // Do NOT call super.feedFromSession() — this blocks data from
+        // propagating to the rest of the middleware chain (trzsz, etc.)
+    }
+
+    // feedFromTerminal is NOT overridden — terminal→session data flows
+    // through normally so the session can still receive input.
+}
+
+/** @hidden */
+export { TmuxOutputInterceptor }
 
 /**
  * TmuxService manages tmux integration.
@@ -22,6 +51,8 @@ export interface SessionContext {
     topmostTab?: any
     sessionTab?: TmuxSessionTabComponent
     subscriptions: Subscription[]
+    /** Interceptor middleware on the original session, removed on disconnect */
+    outputInterceptor?: TmuxOutputInterceptor
 }
 
 @Injectable({ providedIn: 'root' })
@@ -114,6 +145,12 @@ export class TmuxService {
 
         context.subscriptions.forEach(s => s.unsubscribe())
 
+        // Remove the output interceptor from the original session's middleware chain
+        if (context.outputInterceptor) {
+            context.terminalTab.session?.middleware.remove(context.outputInterceptor)
+            context.outputInterceptor = undefined
+        }
+
         await context.controller.destroy()
 
         // Destroy the session tab (removes from tab bar)
@@ -161,6 +198,14 @@ export class TmuxService {
 
         let buffer = ''
 
+        // Insert a tmux output interceptor at position 0 of the session's
+        // middleware chain.  This captures raw output for the gateway and
+        // prevents trzsz (or other) middleware on the original session from
+        // seeing tmux control mode data (which would cause false positives).
+        const interceptor = new TmuxOutputInterceptor()
+        session.middleware.unshift(interceptor)
+        context.outputInterceptor = interceptor
+
         // Create a controller that uses the terminal's session for I/O
         context.controller = new TmuxController(
             this.logger,
@@ -169,9 +214,9 @@ export class TmuxService {
             () => this.disconnectContext(context)
         )
 
-        // Subscribe to the terminal's output to parse tmux control mode
-        context.subscriptions.push(session.output$.subscribe((data: string) => {
-            buffer += data
+        // Subscribe to the interceptor's raw output to parse tmux control mode
+        context.subscriptions.push(interceptor.rawOutput$.subscribe((data: Buffer) => {
+            buffer += data.toString()
             const lines = buffer.split('\n')
             if (lines.length > 1) {
                 buffer = lines.pop()!

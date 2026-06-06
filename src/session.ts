@@ -42,12 +42,10 @@ export class TmuxPaneSession extends BaseSession {
         this.controller.writeToPane(this.paneId, data)
     }
 
-    /**
-     * Called by BaseTerminalTabComponent when the user types in the terminal.
-     */
-    feedFromTerminal(data: Buffer): void {
-        this.controller.writeToPane(this.paneId, data)
-    }
+    // NOTE: feedFromTerminal is NOT overridden — it goes through the
+    // middleware chain (BaseSession.feedFromTerminal → middleware →
+    // outputToSession$ → write()) so that SessionMiddleware plugins
+    // such as trzsz can intercept terminal input.
 
     kill(_signal?: string): void {
         this.destroy()
@@ -406,13 +404,10 @@ export class TmuxController {
             // capture-pane options:
             // -e: include escape sequences (colors, attributes)
             // -p: output to stdout
+            // -J: join wrapped lines (matches iTerm2's capture-pane flags)
             // -S-: start from beginning of history
-            //
-            // NOTE: We do NOT use -J (join wrapped lines) because it can break
-            // ANSI escape sequences, causing highlights to span across lines incorrectly.
-            // Instead, we let tmux output lines as-is and only fix the line ending format.
             const output = await this.gateway.sendCommand(
-                `capture-pane -ep -S- -t %${paneId}`,
+                `capture-pane -peJS- -t %${paneId}`,
                 TMUX_COMMAND_TOLERATE_ERRORS
             )
 
