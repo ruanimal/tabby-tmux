@@ -80,6 +80,35 @@ export interface TmuxSessionProfile {
         ::ng-deep .pane-area > .child.focused {
             opacity: 1;
         }
+        /*
+         * Transparent hit-target overlays at the right/bottom edges.
+         * xterm renders a scrollbar (~14px wide) that intercepts mouse events,
+         * preventing the pane-area mousemove handler from detecting border
+         * proximity.  These ::after pseudo-elements sit above the scrollbar
+         * (z-index: 10) and capture events for resize dragging.
+         */
+        ::ng-deep .pane-area > .child::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 10px;
+            height: 100%;
+            z-index: 10;
+            pointer-events: auto;
+            cursor: col-resize;
+        }
+        ::ng-deep .pane-area > .child::before {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 10px;
+            z-index: 10;
+            pointer-events: auto;
+            cursor: row-resize;
+        }
         /* Highlight the border when hovering near the right/bottom edge */
         ::ng-deep .pane-area > .child.border-hover-right {
             border-right-color: rgba(128,128,128,0.75);
