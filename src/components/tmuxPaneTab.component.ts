@@ -1,6 +1,7 @@
 import { Component, Injector, Input, OnInit } from '@angular/core'
 import { first } from 'rxjs'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
+import { MenuItemOptions } from 'tabby-core'
 import { TmuxController, TmuxPaneSession } from '../session'
 
 @Component({
@@ -26,6 +27,13 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
      */
     _tmuxActive = true
 
+    /**
+     * When true, input is broadcast to all panes in the tmux session
+     * ("Focus all tmux panes" / synchronize-panes mode).
+     * Toggled via the right-click context menu.
+     */
+    _tmuxSyncInput = false
+
     /** Desired tmux grid size (chars). tmux is authoritative over the cell grid. */
     private _tmuxCols = 0
     private _tmuxRows = 0
@@ -34,7 +42,6 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
 
     constructor(injector: Injector) {
         super(injector)
-        // Don't initialize profile here - paneId is not yet available
     }
 
     ngOnInit(): void {
@@ -147,15 +154,24 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
      * Guard sendInput so that only the active pane forwards hotkey-triggered
      * input (Ctrl+C, Home, End, etc.) to its tmux session.
      *
-     * Normal terminal input from xterm (frontend.input$) also goes through
-     * sendInput(), but only the pane with actual DOM focus generates xterm
-     * input events, so this guard is safe.
+     * When _tmuxSyncInput is enabled ("Focus all tmux panes"), input is also
+     * broadcast to all other panes in the session.
      */
     override sendInput(data: string | Buffer): void {
         if (!this._tmuxActive) {
             return
         }
         super.sendInput(data)
+
+        // Broadcast to all other panes when sync mode is active
+        if (this._tmuxSyncInput && this.controller) {
+            const buf = Buffer.isBuffer(data) ? data : Buffer.from(data)
+            for (const pid of this.controller.getAllPaneIds()) {
+                if (pid !== this.paneId) {
+                    this.controller.writeToPane(pid, buf)
+                }
+            }
+        }
     }
 
     /**
@@ -171,5 +187,98 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     // Override generic title behavior
     getCustomTitle(): string {
         return `Tmux Pane %${this.paneId}`
+    }
+    /**
+     * Override the native context menu to provide tmux-specific items only.
+     * Keeps: Copy, Paste, Close (pane).
+     * Adds: Exit Tmux Mode, Split submenu, Focus all tmux panes.
+     */
+    async buildContextMenu (): Promise<MenuItemOptions[]> {
+        const items: MenuItemOptions[] = [
+            {
+                label: this.translate.instant('Copy'),
+                click: () => this.frontend?.copySelection(),
+            },
+            {
+                label: this.translate.instant('Paste'),
+                click: () => this.paste(),
+            },
+            { type: 'separator' },
+            {
+                label: this.translate.instant('Split'),
+                submenu: [
+                    { label: this.translate.instant('Right'), click: () => this.splitPane('right') },
+                    { label: this.translate.instant('Down'), click: () => this.splitPane('down') },
+                    { label: this.translate.instant('Left'), click: () => this.splitPane('left') },
+                    { label: this.translate.instant('Up'), click: () => this.splitPane('up') },
+                ] as MenuItemOptions[],
+            },
+            {
+                label: this.translate.instant('Focus all tmux panes'),
+                type: 'checkbox',
+                checked: this._tmuxSyncInput,
+                click: () => this.toggleSyncInput(),
+            },
+            { type: 'separator' },
+            {
+                label: this.translate.instant('Close'),
+                click: () => this.closePane(),
+            },
+        ]
+        return items
+    }
+
+    protected override async handleRightMouseDown (event: MouseEvent): Promise<void> {
+        event.preventDefault()
+        event.stopPropagation()
+        this.platform.popupContextMenu(await this.buildContextMenu(), event)
+    }
+
+    private async splitPane (direction: 'right' | 'down' | 'left' | 'up'): Promise<void> {
+        if (!this.controller) return
+        const flagMap: Record<string, string> = {
+            'right': '-h',
+            'down': '-v',
+            'left': '-h -b',
+            'up': '-v -b',
+        }
+        await this.controller.gateway.sendCommand(
+            `split-window ${flagMap[direction]} -t %${this.paneId}`
+        )
+        // refreshPanes discovers the new pane and emits pane-add with
+        // the correct windowId, so TmuxSessionTab can mount and lay it out.
+        await this.controller.refreshPanes()
+    }
+
+    private async closePane (): Promise<void> {
+        if (!this.controller) return
+        await this.controller.killPane(this.paneId)
+    }
+
+    /**
+     * Toggle "Focus all tmux panes" (synchronize input) across all panes
+     * in the current tmux session.
+     */
+    private toggleSyncInput (): void {
+        if (!this.controller) return
+        const newValue = !this._tmuxSyncInput
+        for (const pid of this.controller.getAllPaneIds()) {
+            const tab = this.findPaneTab(pid)
+            if (tab) {
+                tab._tmuxSyncInput = newValue
+            }
+        }
+    }
+
+    private findPaneTab (paneId: number): TmuxPaneTabComponent | null {
+        // Walk the session tab's window pane map to find the tab
+        const parent = this.parent as any
+        if (parent?.windowPaneTabs) {
+            for (const paneMap of parent.windowPaneTabs.values()) {
+                const tab = paneMap.get(paneId)
+                if (tab) return tab
+            }
+        }
+        return null
     }
 }

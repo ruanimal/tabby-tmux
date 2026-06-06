@@ -316,7 +316,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             case 'layout-change':
                 if (event.windowId === this.activeWindowId && event.data?.layout) {
                     this.logger.info(`Syncing layout for window @${event.windowId}`)
-                    this.syncLayout(event.data.layout)
+                    await this.syncLayout(event.data.layout)
                     // NOTE: Do NOT call refreshClientSize here.
                     // refresh-client -C causes tmux to re-layout, which sends
                     // another %layout-change, creating an infinite loop.
@@ -399,7 +399,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             const windowState = this.controller?.getWindowState(windowId)
             if (windowState?.layout) {
                 this.logger.info('Syncing layout after mounting panes')
-                this.syncLayout(windowState.layout)
+                await this.syncLayout(windowState.layout)
             }
         }
 
@@ -514,6 +514,13 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
     /**
      * Handle a new pane being added to a window (real-time from tmux).
+     *
+     * NOTE: We do NOT call addTab here. Instead, we just register the pane in
+     * the map and let syncLayout (called from the %layout-change event that
+     * tmux sends alongside new-pane creation) build the correct tree.
+     * Calling addTab with a fixed direction ('r') would create a wrong tree
+     * structure that syncLayout then has to undo — and the async view
+     * attachment inside addTab races with syncLayout, leaving panes invisible.
      */
     private async handlePaneAdd(paneId: number, windowId: number): Promise<void> {
         if (!this.controller) return
@@ -529,31 +536,13 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             return
         }
 
-        // Create the pane tab using TabsService (proper Angular DI)
+        // Create the pane tab and register it — the actual tree mounting
+        // happens when syncLayout runs from the %layout-change event.
         const paneTab = this.createPaneTab(paneId)
         paneTab.controller = this.controller
         paneTab.paneId = paneId
         paneMap.set(paneId, paneTab)
-
-        // If this pane belongs to the active window and view is ready, mount it
-        if (windowId === this.activeWindowId && this._initialized) {
-            const existingTabs = this.getAllTabs()
-            this.logger.info(`Mounting new pane %${paneId} to active window @${windowId}, existing tabs: ${existingTabs.length}`)
-            if (existingTabs.length === 0) {
-                await this.addTab(paneTab as any, null, 'r')
-            } else {
-                await this.addTab(paneTab as any, existingTabs[existingTabs.length - 1] as any, 'r')
-            }
-            (paneTab as any).emitVisibility(true)
-            (paneTab as any).emitFocused()
-
-            // Re-sync layout
-            const windowState = this.controller.getWindowState(windowId)
-            if (windowState?.layout) {
-                this.syncLayout(windowState.layout)
-            }
-            this.cdr.detectChanges()
-        }
+        this.logger.info(`Registered new pane %${paneId} for window @${windowId}, awaiting layout sync`)
     }
 
     /**
@@ -643,8 +632,12 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
     /**
      * Synchronize SplitTab layout with tmux's layout string.
+     *
+     * This is the SINGLE place where the SplitTab tree is built.
+     * It creates missing pane tabs, attaches their views, cleans up stale
+     * panes, and rebuilds the entire tree from the tmux layout string.
      */
-    private syncLayout(layoutStr: string): void {
+    private async syncLayout(layoutStr: string): Promise<void> {
         const layoutTree = parseTmuxLayout(layoutStr)
         if (!layoutTree) {
             this.logger.warn('Failed to parse layout:', layoutStr)
@@ -653,6 +646,44 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
         const panes = flattenLayout(layoutTree)
         this.logger.info(`Syncing layout for window @${this.activeWindowId}: ${panes.length} panes`)
+
+        // Ensure pane tabs exist and have attached views for every pane in
+        // the layout. New panes (from split-window) are registered by
+        // handlePaneAdd but have no view yet — we call addTab to create one.
+        if (this.activeWindowId !== null) {
+            let paneMap = this.windowPaneTabs.get(this.activeWindowId)
+            if (!paneMap) {
+                paneMap = new Map()
+                this.windowPaneTabs.set(this.activeWindowId, paneMap)
+            }
+            for (const pane of panes) {
+                if (!paneMap.has(pane.paneId)) {
+                    this.logger.info(`Creating pane tab for %${pane.paneId} during layout sync`)
+                    const paneTab = this.createPaneTab(pane.paneId)
+                    paneTab.controller = this.controller!
+                    paneTab.paneId = pane.paneId
+                    paneMap.set(pane.paneId, paneTab)
+                }
+            }
+
+            // Attach views for panes that don't have one yet.
+            // The tree structure will be rebuilt below, so the addTab direction
+            // doesn't matter — we just need the view to exist.
+            for (const pane of panes) {
+                const paneTab = paneMap.get(pane.paneId)!
+                if (!(this as any).viewRefs?.has(paneTab)) {
+                    this.logger.info(`Attaching view for pane %${pane.paneId}`)
+                    const existingTabs = this.getAllTabs()
+                    if (existingTabs.length === 0) {
+                        await this.addTab(paneTab as any, null, 'r')
+                    } else {
+                        await this.addTab(paneTab as any, existingTabs[existingTabs.length - 1] as any, 'r')
+                    }
+                    ;(paneTab as any).emitVisibility(true)
+                    ;(paneTab as any).emitFocused()
+                }
+            }
+        }
 
         // Detect and clean up stale pane tabs that are no longer in the layout.
         // When tmux closes a pane, the %layout-change notification omits it.

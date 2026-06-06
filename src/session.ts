@@ -485,6 +485,14 @@ export class TmuxController {
         const first = this.windowStates.keys().next()
         return first.done ? undefined : first.value
     }
+
+    /**
+     * Get all known pane IDs across all windows.
+     * Used by TmuxPaneTabComponent for "Focus all tmux panes" (sync input).
+     */
+    getAllPaneIds(): number[] {
+        return Array.from(this.knownPanes)
+    }
 }
 
 // Re-export for backwards compatibility
