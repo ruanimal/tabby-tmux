@@ -6,7 +6,10 @@ import { TmuxController, TmuxPaneSession } from '../session'
 @Component({
     selector: 'tmux-pane-tab',
     template: BaseTerminalTabComponent.template,
-    styles: BaseTerminalTabComponent.styles,
+    styles: [
+        ...BaseTerminalTabComponent.styles,
+        require('./tmuxPaneTab.component.scss'),
+    ],
     animations: BaseTerminalTabComponent.animations,
 })
 export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implements OnInit {

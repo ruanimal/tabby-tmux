@@ -1,0 +1,14 @@
+/*
+ * TmuxPaneTab — full CSS control over the terminal content area.
+ *
+ * BaseTerminalTabComponent applies a "spaciness" margin that shrinks the
+ * content box, which clips edge characters and makes size calculations
+ * harder.  tmux owns the cell grid, so we zero out every spacing property
+ * so the pane occupies 100 % of its allocated container — pixel-accurate
+ * and no rounding surprises.
+ */
+:host > .content {
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
