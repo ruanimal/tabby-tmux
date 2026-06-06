@@ -43,12 +43,10 @@ export interface TmuxSessionProfile {
         <tmux-window-bar
             [controller]="controller"
             [activeWindowId]="activeWindowId"
-            [collapsed]="windowBarCollapsed"
-            [sessionName]="sessionName"
             (windowSwitch)="switchToWindow($event)"
+            (windowClose)="onWindowClose($event)"
             (disconnect)="onDisconnect()"
             (createWindow)="onCreateWindow()"
-            (collapsedChange)="onToggleCollapse($event)"
         ></tmux-window-bar>
     `,
     styles: [`
@@ -137,7 +135,6 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     activeWindowId: number | null = null
     connected = false
     sessionName = ''
-    windowBarCollapsed = false
     private _initialized = false
     private _tabsService: TabsService
     private _resizeHandler: (() => void) | null = null
@@ -306,6 +303,13 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                     // Pane might have moved to a different window
                     this.logger.info(`Handling pane-update event: pane=${event.paneId}, window=${event.windowId}`)
                     await this.handlePaneUpdate(event.paneId, event.windowId)
+                }
+                break
+
+            case 'pane-close':
+                if (event.paneId !== undefined && event.windowId !== undefined) {
+                    this.logger.info(`Handling pane-close event: pane=${event.paneId}, window=${event.windowId}`)
+                    this.handlePaneClose(event.paneId, event.windowId)
                 }
                 break
 
@@ -650,6 +654,25 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         const panes = flattenLayout(layoutTree)
         this.logger.info(`Syncing layout for window @${this.activeWindowId}: ${panes.length} panes`)
 
+        // Detect and clean up stale pane tabs that are no longer in the layout.
+        // When tmux closes a pane, the %layout-change notification omits it.
+        // We remove the corresponding tab so the UI stays consistent.
+        if (this.activeWindowId !== null) {
+            const paneMap = this.windowPaneTabs.get(this.activeWindowId)
+            if (paneMap) {
+                const layoutPaneIds = new Set(panes.map(p => p.paneId))
+                for (const [paneId, paneTab] of paneMap) {
+                    if (!layoutPaneIds.has(paneId)) {
+                        this.logger.info(`Pane %${paneId} no longer in layout, cleaning up`)
+                        paneMap.delete(paneId)
+                        ;(paneTab as any).emitVisibility(false)
+                        this.detachPaneView(paneTab as any)
+                        ;(paneTab as any).destroy()
+                    }
+                }
+            }
+        }
+
         // Build the SplitContainer tree from the parsed layout
         const newRoot = this.buildSplitContainerFromLayout(layoutTree)
         if (newRoot instanceof SplitContainer) {
@@ -670,6 +693,28 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         // cell dimensions from the layout string into each xterm. This keeps
         // wrapping aligned with tmux and avoids any pixel-derived resize.
         this.applyLayoutGrids(layoutTree)
+    }
+
+    /**
+     * Handle a pane being closed (from %pane-close event or manual cleanup).
+     */
+    private handlePaneClose(paneId: number, windowId: number): void {
+        const paneMap = this.windowPaneTabs.get(windowId)
+        if (!paneMap) return
+
+        const paneTab = paneMap.get(paneId)
+        if (!paneTab) return
+
+        this.logger.info(`Cleaning up closed pane %${paneId} in window @${windowId}`)
+        paneMap.delete(paneId)
+
+        if (windowId === this.activeWindowId) {
+            ;(paneTab as any).emitVisibility(false)
+            this.detachPaneView(paneTab as any)
+            this.layout()
+            this.cdr.detectChanges()
+        }
+        ;(paneTab as any).destroy()
     }
 
     /**
@@ -1037,6 +1082,12 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         this.tmuxService.disconnect()
     }
 
+    async onWindowClose(windowId: number): Promise<void> {
+        if (this.controller) {
+            await this.controller.killWindow(windowId)
+        }
+    }
+
     async onCreateWindow(): Promise<void> {
         if (this.controller) {
             const newWindowId = await this.controller.createWindow()
@@ -1044,11 +1095,6 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 await this.switchToWindow(newWindowId)
             }
         }
-    }
-
-    onToggleCollapse(collapsed: boolean): void {
-        this.windowBarCollapsed = collapsed
-        this.cdr.detectChanges()
     }
 
     override ngOnDestroy(): void {

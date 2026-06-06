@@ -60,6 +60,7 @@ export class TmuxGateway {
     public sessionChanged$ = new Subject<{ sessionName: string; sessionId: number }>()
     public sessionsChanged$ = new Subject<void>()
     public paneChanged$ = new Subject<{ windowId: number; paneId: number }>()
+    public paneClose$ = new Subject<{ windowId: number; paneId: number }>()
     public exit$ = new Subject<string>()
     public initialized$ = new Subject<void>()
 
@@ -245,6 +246,10 @@ export class TmuxGateway {
             if (this.acceptNotifications) {
                 this.parsePaneChanged(line)
             }
+        } else if (line.startsWith('%pane-close') || line.startsWith('%unlinked-pane-close')) {
+            if (this.acceptNotifications) {
+                this.parsePaneClose(line)
+            }
         } else if (line.startsWith('%exit')) {
             this.parseExit(line)
         } else if (line.startsWith('%')) {
@@ -403,6 +408,17 @@ export class TmuxGateway {
         const match = line.match(/^%window-pane-changed @(\d+) %(\d+)$/)
         if (match) {
             this.paneChanged$.next({
+                windowId: parseInt(match[1]),
+                paneId: parseInt(match[2])
+            })
+        }
+    }
+
+    private parsePaneClose(line: string): void {
+        // %pane-close @<window> %<pane>
+        const match = line.match(/^%(?:unlinked-)?pane-close @(\d+) %(\d+)$/)
+        if (match) {
+            this.paneClose$.next({
                 windowId: parseInt(match[1]),
                 paneId: parseInt(match[2])
             })

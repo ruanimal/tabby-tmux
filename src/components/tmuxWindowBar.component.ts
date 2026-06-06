@@ -11,7 +11,7 @@ interface WindowInfo {
 @Component({
     selector: 'tmux-window-bar',
     template: `
-        <div class="window-bar" *ngIf="!collapsed">
+        <div class="window-bar">
             <div class="window-tabs">
                 <button
                     *ngFor="let win of windows"
@@ -23,25 +23,19 @@ interface WindowInfo {
                 >
                     <span class="window-name">{{ win.name }}</span>
                     <span class="pane-badge" *ngIf="win.paneCount > 1">{{ win.paneCount }}</span>
+                    <span class="window-close" title="Close Window" (click)="onCloseWindow($event, win)">
+                        <i class="fas fa-times"></i>
+                    </span>
+                </button>
+                <button class="window-tab add-btn" title="New Window" (click)="createWindow.emit()">
+                    <i class="fas fa-plus"></i>
                 </button>
             </div>
             <div class="bar-actions">
-                <button class="bar-btn" title="New Window" (click)="createWindow.emit()">
-                    <i class="fas fa-plus"></i>
-                </button>
                 <button class="bar-btn" title="Disconnect" (click)="disconnect.emit()">
                     <i class="fas fa-eject"></i>
                 </button>
-                <button class="bar-btn" title="Collapse" (click)="onToggleCollapse()">
-                    <i class="fas fa-chevron-down"></i>
-                </button>
             </div>
-        </div>
-        <div class="window-bar collapsed-bar" *ngIf="collapsed">
-            <button class="bar-btn expand-btn" title="Expand" (click)="onToggleCollapse()">
-                <i class="fas fa-chevron-up"></i>
-                <span class="session-label" *ngIf="sessionName">{{ sessionName }}</span>
-            </button>
         </div>
     `,
     styles: [`
@@ -59,19 +53,6 @@ interface WindowInfo {
             min-height: 28px;
             overflow-x: auto;
         }
-        .collapsed-bar {
-            justify-content: center;
-            padding: 2px 12px;
-        }
-        .expand-btn {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .session-label {
-            font-size: 0.8em;
-            color: #aaa;
-        }
         .window-tabs {
             display: flex;
             align-items: center;
@@ -84,7 +65,8 @@ interface WindowInfo {
             display: flex;
             align-items: center;
             gap: 4px;
-            padding: 3px 10px;
+            height: 22px;
+            padding: 0 8px;
             border: 1px solid transparent;
             border-radius: 3px;
             background: transparent;
@@ -92,7 +74,7 @@ interface WindowInfo {
             font-size: 0.82em;
             cursor: pointer;
             white-space: nowrap;
-            transition: all 0.15s;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
         }
         .window-tab:hover {
             background: rgba(255, 255, 255, 0.08);
@@ -113,6 +95,35 @@ interface WindowInfo {
             border-radius: 8px;
             background: rgba(255, 255, 255, 0.1);
             font-size: 0.85em;
+            color: #aaa;
+        }
+        .window-close {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-left: auto;
+            margin-right: -4px;
+            width: 14px;
+            height: 14px;
+            border-radius: 2px;
+            font-size: 0.7em;
+            color: transparent;
+            cursor: pointer;
+            visibility: hidden;
+        }
+        .window-tab:hover .window-close {
+            visibility: visible;
+            color: #888;
+        }
+        .window-close:hover {
+            background: rgba(255, 80, 80, 0.3);
+            color: #f66;
+        }
+        .add-btn {
+            color: #666;
+            padding: 0 6px;
+        }
+        .add-btn:hover {
             color: #aaa;
         }
         .bar-actions {
@@ -143,13 +154,11 @@ interface WindowInfo {
 export class TmuxWindowBarComponent implements OnInit, OnDestroy {
     @Input() controller: TmuxController
     @Input() activeWindowId: number | null = null
-    @Input() collapsed = false
-    @Input() sessionName = ''
 
     @Output() windowSwitch = new EventEmitter<number>()
+    @Output() windowClose = new EventEmitter<number>()
     @Output() disconnect = new EventEmitter<void>()
     @Output() createWindow = new EventEmitter<void>()
-    @Output() collapsedChange = new EventEmitter<boolean>()
 
     windows: WindowInfo[] = []
 
@@ -198,9 +207,9 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
         this.cdr.detectChanges()
     }
 
-    onToggleCollapse(): void {
-        this.collapsed = !this.collapsed
-        this.collapsedChange.emit(this.collapsed)
+    onCloseWindow(event: MouseEvent, win: WindowInfo): void {
+        event.stopPropagation()
+        this.windowClose.emit(win.id)
     }
 
     onContextMenu(event: MouseEvent, _win: WindowInfo): void {

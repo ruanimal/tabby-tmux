@@ -179,6 +179,26 @@ export class TmuxController {
             this.events.next({ type: 'window-renamed', windowId, data: { name } })
         })
 
+        // Handle pane close events (tmux 3.2+)
+        this.gateway.paneClose$.subscribe(({ windowId, paneId }) => {
+            this.logger.info(`Pane %${paneId} closed in window @${windowId}`)
+            // Remove from known panes
+            this.knownPanes.delete(paneId)
+            // Remove from window state
+            const windowState = this.windowStates.get(windowId)
+            if (windowState) {
+                windowState.panes.delete(paneId)
+            }
+            // Clean up pane session if exists
+            const session = this.paneSessions.get(paneId)
+            if (session) {
+                session.destroy()
+                this.paneSessions.delete(paneId)
+            }
+            this.pendingPaneOutput.delete(paneId)
+            this.events.next({ type: 'pane-close', paneId, windowId })
+        })
+
         // Handle layout changes
         this.gateway.layoutChange$.subscribe(({ windowId, layout, visibleLayout, zoomed }) => {
             const state = this.windowStates.get(windowId)
