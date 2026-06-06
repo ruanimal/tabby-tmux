@@ -49,6 +49,8 @@ export interface SessionContext {
     terminalTab: BaseTerminalTabComponent<any>
     /** The topmost parent Tab (SplitTabComponent or terminal tab) that was hidden */
     topmostTab?: any
+    /** Original index of topmostTab in app.tabs, for restoring position */
+    topmostTabIndex?: number
     sessionTab?: TmuxSessionTabComponent
     subscriptions: Subscription[]
     /** Interceptor middleware on the original session, removed on disconnect */
@@ -100,6 +102,15 @@ export class TmuxService {
 
         this.logger.info('Creating TmuxSessionTab...')
 
+        // Find the topmost parent tab (the actual tab listed in the top tab bar)
+        const topmostTab = context.terminalTab.topmostParent || context.terminalTab
+        context.topmostTab = topmostTab
+
+        // Remember the original index so we can replace in-place
+        const tabs: any[] = (this.appService as any).tabs
+        const index = tabs.indexOf(topmostTab)
+        context.topmostTabIndex = index
+
         // IMPORTANT: We must use openNewTabRaw, NOT openNewTab.
         // openNewTab wraps non-SplitTab types in a wrapper SplitTab via wrapAndAddTab().
         // But TmuxSessionTabComponent extends SplitTabComponent, and wrapAndAddTab's
@@ -119,19 +130,23 @@ export class TmuxService {
 
         context.sessionTab = sessionTab
 
-        this.logger.info('TmuxSessionTab created, proceeding to hide original tab...')
-
-        // Find the topmost parent tab (the actual tab listed in the top tab bar)
-        const topmostTab = context.terminalTab.topmostParent || context.terminalTab
-        context.topmostTab = topmostTab
-
-        // Temporarily hide the topmost tab from the app tabs list
-        const tabs: any[] = (this.appService as any).tabs
-        const index = tabs.indexOf(topmostTab)
-        this.logger.info(`Original tab index in app tabs: ${index}`)
+        // Move the session tab to the same position as the original tab
         if (index !== -1) {
-            tabs.splice(index, 1)
-            ;(this.appService as any).tabsChanged.next()
+            const sessionIndex = tabs.indexOf(sessionTab)
+            if (sessionIndex !== -1) {
+                tabs.splice(sessionIndex, 1)       // remove from end
+                tabs.splice(index, 0, sessionTab)  // insert at original position
+                ;(this.appService as any).tabsChanged.next()
+            }
+        }
+
+        // Hide the original topmost tab
+        if (index !== -1) {
+            const origIndex = tabs.indexOf(topmostTab)
+            if (origIndex !== -1) {
+                tabs.splice(origIndex, 1)
+                ;(this.appService as any).tabsChanged.next()
+            }
         }
 
         // When the session tab is closed (by user or disconnect), clean up
@@ -159,9 +174,17 @@ export class TmuxService {
             context.sessionTab = undefined
         }
 
-        // Restore the original topmost tab to the tab bar
+        // Restore the original topmost tab to the tab bar at its original position
         if (context.topmostTab) {
-            ;(this.appService as any).addTabRaw(context.topmostTab)
+            const tabs: any[] = (this.appService as any).tabs
+            const insertAt = context.topmostTabIndex !== undefined
+                ? Math.min(context.topmostTabIndex, tabs.length)
+                : tabs.length
+            tabs.splice(insertAt, 0, context.topmostTab)
+            ;(this.appService as any).tabsChanged.next()
+
+            // Activate the restored tab
+            ;(this.appService as any).selectTab(context.topmostTab)
         }
 
         this.logger.info('Disconnected tmux context')

@@ -1110,7 +1110,10 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     // --- UI Event Handlers ---
 
     onDisconnect(): void {
-        this.tmuxService.disconnect()
+        const ctx = this.tmuxService.findContextForTab(this)
+        if (ctx) {
+            this.tmuxService.disconnectContext(ctx)
+        }
     }
 
     async onWindowClose(windowId: number): Promise<void> {
