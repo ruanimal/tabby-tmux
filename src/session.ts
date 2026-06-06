@@ -73,12 +73,27 @@ export class TmuxPaneSession extends BaseSession {
     /**
      * Emit output to the pane.
      *
-     * Data flows through BaseSession's middleware and buffering mechanism.
-     * BaseTerminalTabComponent will automatically call releaseInitialDataBuffer()
-     * when the frontend is ready, so we don't need custom buffering here.
+     * If the controller is currently restoring history for this pane
+     * (capture-pane), the output is buffered and later discarded instead
+     * of being sent to the terminal.  capture-pane already includes all
+     * visible content, so real-time output arriving during the restore
+     * would be shown twice if we forwarded it.
      */
     emitOutputToPane(data: Buffer): void {
-        // Directly call emitOutput - it will be buffered by BaseSession until released
+        if (this.controller.isRestoringHistory(this.paneId)) {
+            this.controller.bufferRestoreOutput(this.paneId, data)
+            return
+        }
+        this.emitOutput(data)
+    }
+
+    /**
+     * Write captured history directly to the terminal, bypassing the
+     * restore-buffer guard.  Used by restorePaneHistory() to write the
+     * capture-pane response without triggering the duplication-prevention
+     * buffering.
+     */
+    writeCapturedHistory(data: Buffer): void {
         this.emitOutput(data)
     }
 }
@@ -103,6 +118,10 @@ export class TmuxController {
     private windowStates = new Map<number, WindowState>()
     private knownPanes = new Set<number>()
     private pendingPaneOutput = new Map<number, Buffer[]>()
+    /** Panes currently restoring history via capture-pane */
+    private restoringHistoryPanes = new Set<number>()
+    /** Buffer for output arriving during history restore */
+    private restoreBuffer = new Map<number, Buffer[]>()
     private sessionName = ''
     private sessionId = -1
     private attached = false
@@ -333,6 +352,8 @@ export class TmuxController {
     unregisterPane(paneId: number): void {
         this.paneSessions.delete(paneId)
         this.pendingPaneOutput.delete(paneId)
+        this.restoringHistoryPanes.delete(paneId)
+        this.restoreBuffer.delete(paneId)
     }
 
     getPaneSession(paneId: number): TmuxPaneSession | undefined {
@@ -358,8 +379,29 @@ export class TmuxController {
         this.gateway.sendKeys(data, paneId)
     }
 
+    /** Check if a pane is currently restoring history */
+    isRestoringHistory(paneId: number): boolean {
+        return this.restoringHistoryPanes.has(paneId)
+    }
+
+    /** Buffer output that arrives during history restore */
+    bufferRestoreOutput(paneId: number, data: Buffer): void {
+        if (!this.restoreBuffer.has(paneId)) {
+            this.restoreBuffer.set(paneId, [])
+        }
+        this.restoreBuffer.get(paneId)!.push(data)
+    }
+
     async restorePaneHistory(paneId: number): Promise<void> {
         this.logger.info(`Restoring history for pane %${paneId}`)
+
+        // Enable buffering: any %output arriving while we wait for
+        // capture-pane will be buffered instead of sent to the terminal.
+        // This prevents duplication because capture-pane already includes
+        // all visible content at the time it snapshots the pane.
+        this.restoringHistoryPanes.add(paneId)
+        this.restoreBuffer.set(paneId, [])
+
         try {
             // capture-pane options:
             // -e: include escape sequences (colors, attributes)
@@ -382,10 +424,24 @@ export class TmuxController {
                 // Without \r, lines will start at the column where the previous line ended
                 const normalizedOutput = output.replace(/\n/g, '\r\n')
                 const buffer = Buffer.from(normalizedOutput, 'utf-8')
-                this.paneSessions.get(paneId)?.emitOutputToPane(buffer)
+                this.paneSessions.get(paneId)?.writeCapturedHistory(buffer)
             }
         } catch (e) {
             this.logger.warn(`Failed to restore history for pane %${paneId}:`, e)
+        } finally {
+            // Disable buffering and discard any output that arrived during
+            // the restore.  We cannot distinguish output that arrived before
+            // the capture-pane snapshot (already in the response → would
+            // duplicate) from output that arrived after (truly new → would
+            // lose).  Since the snapshot→%end window is tiny and the most
+            // likely content there is the shell prompt (already captured),
+            // discarding is the safe trade-off to avoid visible duplication.
+            this.restoringHistoryPanes.delete(paneId)
+            const buffered = this.restoreBuffer.get(paneId) || []
+            this.restoreBuffer.delete(paneId)
+            if (buffered.length > 0) {
+                this.logger.info(`Discarding ${buffered.length} buffered output chunk(s) for pane %${paneId} (included in capture-pane)`)
+            }
         }
     }
 
