@@ -801,12 +801,16 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         // bookkeeping, but we no longer render split-tab-spanner elements, so
         // their pixel width should not be subtracted here.
         const spannerPx = 0
-        // xterm renders a scrollbar/overview-ruler (~14px) + ~2px padding per pane.
-        const decorationPxPerPane = 16
-        const totalDecorationPx = paneCount * decorationPxPerPane
+        // Per-pane visual padding defined in tmuxPaneTab.component.scss.
+        // Each pane has 4px on all sides (8px total per axis).
+        // For N panes in a row: total horizontal padding = N * 8px.
+        // For N panes in a column: total vertical padding = N * 8px.
+        // Approximate as all panes contributing to both axes (safe overestimate).
+        const panePadPerAxis = 8
+        const totalPadPx = paneCount * panePadPerAxis
 
-        const availableWidth = rect.width - spannerPx - totalDecorationPx
-        const availableHeight = rect.height
+        const availableWidth = rect.width - spannerPx - totalPadPx
+        const availableHeight = rect.height - totalPadPx
 
         const contentCols = Math.floor(availableWidth / cell.width)
         const contentRows = Math.floor(availableHeight / cell.height)

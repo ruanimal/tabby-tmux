@@ -6,9 +6,24 @@
  * harder.  tmux owns the cell grid, so we zero out every spacing property
  * so the pane occupies 100 % of its allocated container — pixel-accurate
  * and no rounding surprises.
+ *
+ * Uniform 4px padding on all sides gives consistent visual breathing room.
+ * The scrollbar is hidden to remove the asymmetric right-side gap and
+ * simplify size math; scrolling is handled by Tabby's local history buffer.
+ * Padding is subtracted in measureClientSize() so tmux grid calculations
+ * remain accurate.
  */
 :host > .content {
     margin: 0;
-    padding: 0;
+    padding: 4px;
     border: 0;
+    box-sizing: border-box;
+}
+
+/* Hide xterm scrollbar — tmux handles scrolling via Control Mode protocol */
+:host ::ng-deep .xterm {
+    overflow: hidden !important;
+}
+:host ::ng-deep .xterm-viewport {
+    overflow-y: hidden !important;
 }
