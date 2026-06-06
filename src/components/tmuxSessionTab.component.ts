@@ -7,6 +7,17 @@ import { TmuxService } from '../services/tmux.service'
 import { TmuxPaneTabComponent } from './tmuxPaneTab.component'
 import { parseTmuxLayout, TmuxLayoutNode, flattenLayout } from '../layoutParser'
 
+/** A draggable divider derived from the tmux layout tree */
+interface TmuxDivider {
+    /** 'h' = horizontal bar (splits top/bottom), 'v' = vertical bar (splits left/right) */
+    orientation: 'h' | 'v'
+    /** Pixel position relative to .pane-area (computed from tmux cell coords) */
+    xPx: number
+    yPx: number
+    wPx: number
+    hPx: number
+}
+
 export interface TmuxSessionProfile {
     sessionName?: string
 }
@@ -26,30 +37,8 @@ export interface TmuxSessionProfile {
         '[class.tmux-session-host]': 'true'
     },
     template: `
-        <div class="pane-area">
+        <div class="pane-area" #paneAreaEl>
             <ng-container #vc></ng-container>
-            <split-tab-spanner
-                *ngFor='let spanner of _spanners'
-                [container]='spanner.container'
-                [index]='spanner.index'
-                (change)='onSpannerAdjusted(spanner)'
-                (resizing)='onSpannerResizing($event)'
-            ></split-tab-spanner>
-            <split-tab-drop-zone
-                *ngFor='let dropZone of _dropZones'
-                [parent]='this'
-                [dropZone]='dropZone'
-                (tabDropped)='onTabDropped($event, dropZone)'
-            >
-            </split-tab-drop-zone>
-            <split-tab-pane-label
-                *ngFor='let tab of getAllTabs()'
-                cdkDropList
-                cdkAutoDropGroup='app-tabs'
-                [tab]='tab'
-                [parent]='this'
-            >
-            </split-tab-pane-label>
         </div>
         <tmux-window-bar
             [controller]="controller"
@@ -75,15 +64,28 @@ export interface TmuxSessionProfile {
             position: relative;
             min-height: 0;
         }
-        /* SplitTab.layoutInternal() adds .child class and sets inline left/top/width/height % */
-        /* but position:absolute comes from CSS — must match inside pane-area */
+        /* SplitTab.layoutInternal() positions .child with inline left/top/width/height %.
+           border-right + border-bottom render the tmux pane separator line.
+           box-sizing: border-box keeps the border inside the layout box so
+           xterm content is not displaced.
+           The border area also serves as the resize drag handle (see onPaneAreaMouseDown). */
         ::ng-deep .pane-area > .child {
             position: absolute;
             transition: 0.125s all;
             opacity: .75;
+            box-sizing: border-box;
+            border-right: 1px solid rgba(128,128,128,0.3);
+            border-bottom: 1px solid rgba(128,128,128,0.3);
         }
         ::ng-deep .pane-area > .child.focused {
             opacity: 1;
+        }
+        /* Highlight the border when hovering near the right/bottom edge */
+        ::ng-deep .pane-area > .child.border-hover-right {
+            border-right-color: rgba(128,128,128,0.75);
+        }
+        ::ng-deep .pane-area > .child.border-hover-bottom {
+            border-bottom-color: rgba(128,128,128,0.75);
         }
         tmux-window-bar {
             flex: 0 0 auto;
@@ -115,6 +117,13 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     /** Last dimensions sent to tmux, for dedup */
     private _lastSentCols = 0
     private _lastSentRows = 0
+
+    /** Custom tmux pane dividers — kept for interface compatibility but not rendered */
+    _tmuxDividers: TmuxDivider[] = []
+    /** mousedown handler attached to .pane-area for border drag detection */
+    private _paneAreaMouseDownHandler: ((e: MouseEvent) => void) | null = null
+    /** mousemove handler for border hover highlight */
+    private _paneAreaMouseMoveHandler: ((e: MouseEvent) => void) | null = null
 
     constructor(
         injector: Injector,
@@ -194,6 +203,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 this._paneAreaObserver = new ResizeObserver(() => this.scheduleRefreshClientSize())
                 this._paneAreaObserver.observe(paneArea)
             }
+
+            // Attach border hover + drag handlers to the pane-area
+            this.attachPaneAreaBorderHandlers()
 
             // Initial size sync after pane mount
             this.scheduleRefreshClientSize()
@@ -293,6 +305,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         if (windowId === this.activeWindowId) return
 
         this.logger.info(`Switching to window @${windowId}`)
+
+        // Clear dividers while switching windows
+        this._tmuxDividers = []
 
         // 1. Detach current active window's pane views (don't use removeTab —
         //    SplitTabComponent.removeTab destroys the tab when root.children
@@ -620,6 +635,8 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             this.layout()
         }
 
+        this.cdr.detectChanges()
+
         // tmux is authoritative over each pane's character grid: push the exact
         // cell dimensions from the layout string into each xterm. This keeps
         // wrapping aligned with tmux and avoids any pixel-derived resize.
@@ -749,8 +766,12 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             : null
         const paneCount = paneMap?.size ?? 1
 
-        // UI spanner (split divider) pixel widths — 10px each (splitTabSpanner CSS).
-        const spannerPx = this._spanners.length * 10
+        // UI spanner pixel widths: tabby's split-tab-spanner is 10px each.
+        // Our custom tmux dividers are purely visual overlays with no pixel cost.
+        // _spanners is still populated by layoutInternal() for tabby's internal
+        // bookkeeping, but we no longer render split-tab-spanner elements, so
+        // their pixel width should not be subtracted here.
+        const spannerPx = 0
         // xterm renders a scrollbar/overview-ruler (~14px) + ~2px padding per pane.
         const decorationPxPerPane = 16
         const totalDecorationPx = paneCount * decorationPxPerPane
@@ -801,6 +822,171 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         }, 150)
     }
 
+    // ─── Border-based pane separator ────────────────────────────────────────
+
+    /** Pixels from the right/bottom edge of a .child that counts as "on border" */
+    private static readonly BORDER_HIT = 10
+
+    /**
+     * Attach mousemove + mousedown handlers to .pane-area so that hovering
+     * near a .child's right/bottom border highlights it, and dragging starts
+     * a tmux resize-pane operation.
+     */
+    private attachPaneAreaBorderHandlers(): void {
+        const host = this.hostElement.nativeElement as HTMLElement
+        const paneArea = host.querySelector('.pane-area') as HTMLElement | null
+        if (!paneArea) return
+
+        const HIT = TmuxSessionTabComponent.BORDER_HIT
+
+        // Track which child + edge is currently hovered
+        let hoveredChild: Element | null = null
+        let hoveredEdge: 'right' | 'bottom' | null = null
+
+        const clearHover = () => {
+            if (hoveredChild) {
+                hoveredChild.classList.remove('border-hover-right', 'border-hover-bottom')
+            }
+            hoveredChild = null
+            hoveredEdge = null
+            paneArea.style.cursor = ''
+        }
+
+        const onMove = (e: MouseEvent) => {
+            const areaRect = paneArea.getBoundingClientRect()
+            const mx = e.clientX - areaRect.left
+            const my = e.clientY - areaRect.top
+
+            // Find a .child whose right or bottom border is within HIT pixels
+            clearHover()
+            const children = paneArea.querySelectorAll('.child')
+            for (const child of Array.from(children)) {
+                const el = child as HTMLElement
+                const r = el.getBoundingClientRect()
+                const right = r.right - areaRect.left
+                const bottom = r.bottom - areaRect.top
+                const left = r.left - areaRect.left
+                const top = r.top - areaRect.top
+
+                // Right border hit: within HIT of right edge, vertically inside
+                if (Math.abs(mx - right) <= HIT && my >= top && my <= bottom) {
+                    el.classList.add('border-hover-right')
+                    paneArea.style.cursor = 'col-resize'
+                    hoveredChild = el
+                    hoveredEdge = 'right'
+                    break
+                }
+                // Bottom border hit: within HIT of bottom edge, horizontally inside
+                if (Math.abs(my - bottom) <= HIT && mx >= left && mx <= right) {
+                    el.classList.add('border-hover-bottom')
+                    paneArea.style.cursor = 'row-resize'
+                    hoveredChild = el
+                    hoveredEdge = 'bottom'
+                    break
+                }
+            }
+        }
+
+        const onDown = (e: MouseEvent) => {
+            if (!hoveredChild || !hoveredEdge || !this.controller) return
+            e.preventDefault()
+            e.stopPropagation()
+
+            const edge = hoveredEdge
+            const cell = this.getCellSize()
+            if (!cell) return
+
+            const startX = e.clientX
+            const startY = e.clientY
+
+            // Find the pane ID for this .child element
+            const resizeTarget = hoveredChild
+            const paneId = this.findPaneIdForElement(resizeTarget)
+            if (paneId === null) return
+
+            // Track last sent delta to send incremental resize commands
+            let lastSentCols = 0
+            let lastSentRows = 0
+
+            const onDragMove = (de: MouseEvent) => {
+                document.body.style.cursor = edge === 'right' ? 'col-resize' : 'row-resize'
+
+                if (edge === 'right') {
+                    const deltaCols = Math.round((de.clientX - startX) / cell.width)
+                    if (deltaCols !== lastSentCols) {
+                        const diff = deltaCols - lastSentCols
+                        const flag = diff > 0 ? '-R' : '-L'
+                        this.controller!.gateway.sendCommand(
+                            `resize-pane ${flag} -t %${paneId} ${Math.abs(diff)}`
+                        )
+                        lastSentCols = deltaCols
+                    }
+                } else {
+                    const deltaRows = Math.round((de.clientY - startY) / cell.height)
+                    if (deltaRows !== lastSentRows) {
+                        const diff = deltaRows - lastSentRows
+                        const flag = diff > 0 ? '-D' : '-U'
+                        this.controller!.gateway.sendCommand(
+                            `resize-pane ${flag} -t %${paneId} ${Math.abs(diff)}`
+                        )
+                        lastSentRows = deltaRows
+                    }
+                }
+            }
+
+            const onDragUp = () => {
+                document.removeEventListener('mousemove', onDragMove)
+                document.removeEventListener('mouseup', onDragUp)
+                document.body.style.cursor = ''
+                clearHover()
+            }
+
+            document.addEventListener('mousemove', onDragMove)
+            document.addEventListener('mouseup', onDragUp)
+        }
+
+        const onLeave = () => clearHover()
+
+        this._paneAreaMouseMoveHandler = onMove
+        this._paneAreaMouseDownHandler = onDown
+        paneArea.addEventListener('mousemove', onMove)
+        paneArea.addEventListener('mousedown', onDown)
+        paneArea.addEventListener('mouseleave', onLeave)
+    }
+
+    private detachPaneAreaBorderHandlers(): void {
+        const host = this.hostElement.nativeElement as HTMLElement
+        const paneArea = host.querySelector('.pane-area') as HTMLElement | null
+        if (!paneArea) return
+        if (this._paneAreaMouseMoveHandler) {
+            paneArea.removeEventListener('mousemove', this._paneAreaMouseMoveHandler)
+            this._paneAreaMouseMoveHandler = null
+        }
+        if (this._paneAreaMouseDownHandler) {
+            paneArea.removeEventListener('mousedown', this._paneAreaMouseDownHandler)
+            this._paneAreaMouseDownHandler = null
+        }
+    }
+
+    /**
+     * Map a .child DOM element back to the tmux pane ID it represents.
+     */
+    private findPaneIdForElement(el: Element): number | null {
+        if (this.activeWindowId === null) return null
+        const paneMap = this.windowPaneTabs.get(this.activeWindowId)
+        if (!paneMap) return null
+        for (const [paneId, paneTab] of paneMap) {
+            const tabEl = (paneTab as any).hostElement?.nativeElement
+                ?? (paneTab as any).element?.nativeElement
+            if (tabEl && (tabEl === el || tabEl.contains(el) || el.contains(tabEl))) {
+                return paneId
+            }
+        }
+        return null
+    }
+
+    // ─── (legacy divider stubs removed) ─────────────────────────────────────
+
     /**
      * Override onSpannerAdjusted to notify tmux of layout change.
      * When the user drags a spanner (split divider), the pane containers
@@ -848,6 +1034,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             clearTimeout(this._resizeTimer)
             this._resizeTimer = null
         }
+        this.detachPaneAreaBorderHandlers()
         super.ngOnDestroy()
     }
 
