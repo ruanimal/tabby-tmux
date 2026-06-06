@@ -184,6 +184,16 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         return super.paste()
     }
 
+    /**
+     * Always allow closing a tmux pane tab without showing the
+     * "command is still running" confirmation dialog.
+     * The tmux server process is not a user command — lifetime is
+     * managed separately by TmuxService/TmuxController.
+     */
+    override async canClose(): Promise<boolean> {
+        return true
+    }
+
     // Override generic title behavior
     getCustomTitle(): string {
         return `Tmux Pane %${this.paneId}`

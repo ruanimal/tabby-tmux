@@ -160,6 +160,12 @@ export class TmuxService {
 
         context.subscriptions.forEach(s => s.unsubscribe())
 
+        // Detach from tmux control mode so the tmux client process exits
+        // cleanly. Without this, the original terminal tab's PTY still has
+        // a running `tmux -CC attach` process, causing "tmux is still running"
+        // confirmation dialogs when the user tries to close the restored tab.
+        context.controller.gateway.detach()
+
         // Remove the output interceptor from the original session's middleware chain
         if (context.outputInterceptor) {
             context.terminalTab.session?.middleware.remove(context.outputInterceptor)
