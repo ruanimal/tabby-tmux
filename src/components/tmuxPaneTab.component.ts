@@ -255,9 +255,10 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         await this.controller.gateway.sendCommand(
             `split-window ${flagMap[direction]} -t %${this.paneId}`
         )
-        // refreshPanes discovers the new pane and emits pane-add with
-        // the correct windowId, so TmuxSessionTab can mount and lay it out.
-        await this.controller.refreshPanes()
+        // No explicit refresh needed — the %layout-change notification
+        // from tmux will trigger discoverPanesFromLayout() in TmuxController,
+        // which discovers the new pane and emits pane-add with pre-loaded
+        // history (iTerm2-style).
     }
 
     private async closePane (): Promise<void> {

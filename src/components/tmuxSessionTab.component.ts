@@ -131,6 +131,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     // windowId → (paneId → paneTab)
     private windowPaneTabs = new Map<number, Map<number, TmuxPaneTabComponent>>()
 
+    /** Queue for serializing async event processing */
+    private eventQueue: Promise<void> = Promise.resolve()
+
     controller: TmuxController | null = null
     activeWindowId: number | null = null
     connected = false
@@ -181,9 +184,13 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         this.sessionName = this.controller.getSessionName() || this.profile.sessionName || 'default'
         this.setTitle(`Tmux: ${this.sessionName}`)
 
-        // Subscribe to controller events
+        // Subscribe to controller events.
+        // Events are queued to ensure serial async processing — critical because
+        // handleControllerEvent contains async operations (switchToWindow, syncLayout)
+        // that must not interleave. Without serialization, concurrent switches from
+        // multiple window-add events (during refreshPanes) corrupt activeWindowId.
         this.eventSubscription = this.controller.events.subscribe(event => {
-            this.handleControllerEvent(event)
+            this.eventQueue = this.eventQueue.then(() => this.handleControllerEvent(event))
         })
 
         // Bootstrap from current controller snapshot in case early events were missed
@@ -207,9 +214,13 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             await this.controller!.refreshPanes()
             this.bootstrapFromControllerState()
 
+            // Wait for all queued events (window-add, pane-add) from refreshPanes
+            // to be processed before switching to the first window.
+            await this.eventQueue
+
             const firstWindowId = this.controller!.getFirstWindowId()
             if (firstWindowId !== undefined) {
-                this.switchToWindow(firstWindowId)
+                await this.switchToWindow(firstWindowId)
             }
 
             // Listen for window resize events (like iTerm2's windowDidResize).
@@ -245,9 +256,28 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
         // Prime local maps from controller state so UI can render even if
         // window-add / pane-add events happened before this component subscribed.
+        // This is critical: discoverWindowsAndPanes() emits window-add and pane-add
+        // during the first call (triggered by session-changed), but the SessionTab
+        // component may not exist yet. By the time ngOnInit runs, the controller
+        // already knows about all windows and panes — we must create pane tabs
+        // here so switchToWindow finds non-empty paneMaps.
         for (const windowState of this.controller.getAllWindowStates()) {
             if (!this.windowPaneTabs.has(windowState.id)) {
                 this.windowPaneTabs.set(windowState.id, new Map())
+            }
+            // Create pane tabs for all panes the controller already knows about
+            const paneMap = this.windowPaneTabs.get(windowState.id)!
+            const ctrlWindowState = this.controller.getWindowState(windowState.id)
+            if (ctrlWindowState) {
+                for (const paneId of ctrlWindowState.panes) {
+                    if (!paneMap.has(paneId)) {
+                        this.logger.info(`Bootstrap: creating pane tab for %${paneId} in window @${windowState.id}`)
+                        const paneTab = this.createPaneTab(paneId)
+                        paneTab.controller = this.controller
+                        paneTab.paneId = paneId
+                        paneMap.set(paneId, paneTab)
+                    }
+                }
             }
         }
 
@@ -272,14 +302,27 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
             case 'window-add':
                 if (event.windowId !== undefined) {
+                    const isNewWindow = !this.windowPaneTabs.has(event.windowId)
                     // Ensure the window has an entry in our map
-                    if (!this.windowPaneTabs.has(event.windowId)) {
+                    if (isNewWindow) {
                         this.logger.info(`Adding new window @${event.windowId} to map`)
                         this.windowPaneTabs.set(event.windowId, new Map())
                     }
-                    // If no active window yet, switch to this one (only if view is ready)
-                    if (this.activeWindowId === null && this._initialized) {
-                        this.logger.info(`Switching to newly added window @${event.windowId}`)
+                    // Switch to a new window if:
+                    // 1. No active window yet (initial attach), OR
+                    // 2. This is a genuinely new window created after attach
+                    //    AND we are past the initial bootstrap phase.
+                    //    During batch discovery, we defer switching to ngAfterViewInit.
+                    //
+                    // MUST await: switchToWindow is async and rebuilds the SplitContainer
+                    // tree. Without await, concurrent switches from multiple window-add
+                    // events (during refreshPanes) interleave and corrupt activeWindowId.
+                    if (this._initialized && this.activeWindowId === null) {
+                        this.logger.info(`Switching to first window @${event.windowId}`)
+                        await this.switchToWindow(event.windowId)
+                    } else if (this._initialized && isNewWindow && this.activeWindowId !== null) {
+                        // Runtime window creation (after initial attach)
+                        this.logger.info(`Switching to new runtime window @${event.windowId}`)
                         await this.switchToWindow(event.windowId)
                     }
                 }
@@ -314,12 +357,16 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 break
 
             case 'layout-change':
-                if (event.windowId === this.activeWindowId && event.data?.layout) {
-                    this.logger.info(`Syncing layout for window @${event.windowId}`)
-                    await this.syncLayout(event.data.layout)
-                    // NOTE: Do NOT call refreshClientSize here.
-                    // refresh-client -C causes tmux to re-layout, which sends
-                    // another %layout-change, creating an infinite loop.
+                // NOTE: We always call syncLayout for the active window.
+                // For non-active windows, we save the layout but don't rebuild
+                // the tree (it will be rebuilt when the user switches to it).
+                if (event.windowId !== undefined && event.data?.layout) {
+                    if (event.windowId === this.activeWindowId) {
+                        this.logger.info(`Syncing layout for active window @${event.windowId}`)
+                        await this.syncLayout(event.data.layout)
+                    } else {
+                        this.logger.info(`Layout changed for inactive window @${event.windowId}, saved for next switch`)
+                    }
                 }
                 break
 
@@ -366,14 +413,36 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         const paneMap = this.windowPaneTabs.get(windowId)!
 
         if (paneMap.size === 0) {
-            // First time visiting this window — send an approximate client size
-            // before creating panes so capture-pane output is roughly correct.
-            // The precise size is sent once the .pane-area ResizeObserver fires
-            // after the panes mount and render their character grid.
-            this.refreshClientSize()
-
-            this.logger.info(`Creating panes for newly visited window @${windowId}`)
-            await this.addPanesForWindow(windowId)
+            // First time visiting this window. Pane tabs will be created by
+            // handlePaneAdd (triggered by discoverPanesFromLayout on
+            // %layout-change). We don't call addPanesForWindow — panes are
+            // discovered asynchronously (iTerm2-style).
+            //
+            // HOWEVER: if the controller already knows the layout for this
+            // window (from batch discovery during attach), we can proactively
+            // discover panes from it instead of waiting for a layout-change
+            // event that may never come (tmux doesn't re-send layout-change
+            // for windows that haven't changed).
+            const windowState = this.controller?.getWindowState(windowId)
+            if (windowState?.layout) {
+                this.logger.info(`No pane tabs yet for window @${windowId}, but layout is known — discovering panes proactively`)
+                // Extract pane IDs from the known layout and create pane tabs
+                const { parseTmuxLayout, flattenLayout } = await import('../layoutParser')
+                const layoutTree = parseTmuxLayout(windowState.layout)
+                if (layoutTree) {
+                    for (const pane of flattenLayout(layoutTree)) {
+                        if (!paneMap.has(pane.paneId)) {
+                            this.logger.info(`Proactively creating pane tab for %${pane.paneId} in window @${windowId}`)
+                            const paneTab = this.createPaneTab(pane.paneId)
+                            paneTab.controller = this.controller!
+                            paneTab.paneId = pane.paneId
+                            paneMap.set(pane.paneId, paneTab)
+                        }
+                    }
+                }
+            } else {
+                this.logger.info(`No pane tabs yet for window @${windowId}, waiting for pane-add events`)
+            }
         } else {
             this.logger.info(`Mounting existing ${paneMap.size} pane(s) for window @${windowId}`)
         }
@@ -406,6 +475,19 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         // 6. Detect changes; precise client size refresh happens via the
         //    .pane-area ResizeObserver once xterm renders its cell grid.
         this.cdr.detectChanges()
+
+        // 7. Push the correct client size to tmux once panes are mounted.
+        //    We use requestAnimationFrame to wait for xterm to render its
+        //    character grid (getCellSize needs real cell dimensions), then
+        //    force a non-deduplicated refresh-client -C.
+        if (paneTabs.length > 0) {
+            requestAnimationFrame(() => {
+                // Reset dedup so the next call always goes through
+                this._lastSentCols = 0
+                this._lastSentRows = 0
+                this.refreshClientSize()
+            })
+        }
     }
 
     /**
@@ -474,25 +556,6 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     }
 
     /**
-     * Create pane tabs for a window that hasn't been visited yet.
-     */
-    private async addPanesForWindow(windowId: number): Promise<void> {
-        if (!this.controller) return
-
-        const paneIds = this.controller.getWindowPanes(windowId)
-        this.logger.info(`Controller returned pane IDs for window @${windowId}: ${paneIds.map(p => '%' + p).join(', ')}`)
-
-        const paneMap = this.windowPaneTabs.get(windowId) || new Map<number, TmuxPaneTabComponent>()
-        this.windowPaneTabs.set(windowId, paneMap)
-
-        for (const paneId of paneIds) {
-            if (paneMap.has(paneId)) continue
-
-            this.logger.info(`Creating pane tab for %${paneId}`)
-            const paneTab = this.createPaneTab(paneId)
-            paneMap.set(paneId, paneTab)
-        }
-        this.logger.info(`Created ${paneMap.size} pane tab(s) for window @${windowId}`)
     }
 
     /**
@@ -553,8 +616,8 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * refreshPanes → pane-update → switchToWindow → ...
      *
      * Only handle panes already tracked in windowPaneTabs. Untracked panes
-     * will be picked up by handlePaneAdd (from pane-add events) or
-     * addPanesForWindow (from switchToWindow).
+     * will be picked up by handlePaneAdd (from pane-add events triggered
+     * by discoverPanesFromLayout on %layout-change).
      */
     private handlePaneUpdate(paneId: number, windowId: number): void {
         // Find which window currently owns this pane in our map

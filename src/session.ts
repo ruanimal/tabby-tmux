@@ -5,6 +5,35 @@ import { Injector } from '@angular/core'
 import { TmuxGateway, TMUX_COMMAND_TOLERATE_ERRORS } from './gateway'
 
 /**
+ * Pane state captured via `list-panes -F` (mirrors iTerm2 TmuxStateParser).
+ * Only fields we can meaningfully apply to an xterm.js terminal are included.
+ */
+export interface PaneState {
+    paneId: number
+    cursorX: number
+    cursorY: number
+    alternateOn: boolean
+    alternateSavedX: number
+    alternateSavedY: number
+    scrollRegionUpper: number
+    scrollRegionLower: number
+    wrapFlag: boolean
+    cursorFlag: boolean
+    insertFlag: boolean
+    bracketPasteFlag: boolean
+    keypadCursorFlag: boolean
+    keypadFlag: boolean
+    paneTabs: number[]
+}
+
+/** Pre-loaded pane data from batch discovery (iTerm2-style). */
+interface PaneSnapshot {
+    history: string
+    altHistory: string
+    state: PaneState
+}
+
+/**
  * TmuxPaneSession - Represents a single tmux pane as a terminal session
  */
 export class TmuxPaneSession extends BaseSession {
@@ -20,7 +49,9 @@ export class TmuxPaneSession extends BaseSession {
 
     async start(): Promise<void> {
         this.open = true
-        // Restore history when session starts
+        // Restore history — for initial attach this is instant (pre-loaded
+        // during batch discovery); for runtime panes it falls back to
+        // capture-pane.
         await this.controller.restorePaneHistory(this.paneId)
     }
 
@@ -69,29 +100,10 @@ export class TmuxPaneSession extends BaseSession {
     }
 
     /**
-     * Emit output to the pane.
-     *
-     * If the controller is currently restoring history for this pane
-     * (capture-pane), the output is buffered and later discarded instead
-     * of being sent to the terminal.  capture-pane already includes all
-     * visible content, so real-time output arriving during the restore
-     * would be shown twice if we forwarded it.
+     * Public wrapper for the protected emitOutput().
+     * Used by TmuxController to deliver history and buffered output.
      */
-    emitOutputToPane(data: Buffer): void {
-        if (this.controller.isRestoringHistory(this.paneId)) {
-            this.controller.bufferRestoreOutput(this.paneId, data)
-            return
-        }
-        this.emitOutput(data)
-    }
-
-    /**
-     * Write captured history directly to the terminal, bypassing the
-     * restore-buffer guard.  Used by restorePaneHistory() to write the
-     * capture-pane response without triggering the duplication-prevention
-     * buffering.
-     */
-    writeCapturedHistory(data: Buffer): void {
+    feedOutput(data: Buffer): void {
         this.emitOutput(data)
     }
 }
@@ -116,10 +128,8 @@ export class TmuxController {
     private windowStates = new Map<number, WindowState>()
     private knownPanes = new Set<number>()
     private pendingPaneOutput = new Map<number, Buffer[]>()
-    /** Panes currently restoring history via capture-pane */
-    private restoringHistoryPanes = new Set<number>()
-    /** Buffer for output arriving during history restore */
-    private restoreBuffer = new Map<number, Buffer[]>()
+    /** Pre-loaded history from batch discovery (iTerm2-style). */
+    private pendingSnapshots = new Map<number, PaneSnapshot>()
     private sessionName = ''
     private sessionId = -1
     private attached = false
@@ -143,10 +153,8 @@ export class TmuxController {
             this.logger.info(`Session received output for pane %${paneId}: ${data.length} bytes`)
 
             if (this.paneSessions.has(paneId)) {
-                this.logger.info(`Dispatching output to existing session for pane %${paneId}`)
-                this.paneSessions.get(paneId)?.emitOutputToPane(data)
+                this.paneSessions.get(paneId)!.feedOutput(data)
             } else {
-                this.logger.info(`Buffering output for unknown/pending pane %${paneId}`)
                 // Buffer output for panes not yet registered
                 if (!this.pendingPaneOutput.has(paneId)) {
                     this.pendingPaneOutput.set(paneId, [])
@@ -178,8 +186,13 @@ export class TmuxController {
                 })
             }
             this.events.next({ type: 'window-add', windowId })
-            // Pane discovery is handled by %layout-change and %output;
-            // no need to re-scan all panes on every window-add.
+            // For new windows created at runtime (after initial attach),
+            // tmux may NOT send %layout-change — only %window-add and %output.
+            // We must proactively discover the window's layout and panes.
+            // The window-add event has already been emitted above, so the UI
+            // has registered the window. discoverWindowsAndPanes will update
+            // the windowState with layout and emit pane-add + layout-change.
+            this.discoverWindowsAndPanes()
         })
 
         this.gateway.windowClose$.subscribe(windowId => {
@@ -215,13 +228,23 @@ export class TmuxController {
             this.events.next({ type: 'pane-close', paneId, windowId })
         })
 
-        // Handle layout changes
+        // Handle layout changes — primary pane discovery trigger (iTerm2-style).
+        // Layout strings contain pane IDs. We extract new panes, capture their
+        // history/state, then emit pane-add events so the UI can create tabs
+        // with pre-loaded data. This replaces the old refreshPanes()-based
+        // discovery for runtime pane creation (split-window etc.).
+        //
+        // IMPORTANT: We do NOT emit 'layout-change' here. discoverPanesFromLayout
+        // emits it after pane-add events, ensuring syncLayout() always runs
+        // after pane tabs have been created.
         this.gateway.layoutChange$.subscribe(({ windowId, layout, visibleLayout, zoomed }) => {
             const state = this.windowStates.get(windowId)
             if (state) {
                 state.layout = layout
             }
-            this.events.next({ type: 'layout-change', windowId, data: { layout, visibleLayout, zoomed } })
+
+            // Discover new panes from the layout string, then emit layout-change
+            this.discoverPanesFromLayout(windowId, layout, visibleLayout, zoomed)
         })
 
         // Handle exit
@@ -246,12 +269,17 @@ export class TmuxController {
     }
 
     /**
-     * Batch-discover all windows and panes (iTerm2-style).
+     * Batch-discover all windows, panes, and history (iTerm2-style).
      *
-     * Called once on %session-changed. Uses `list-windows` to discover
-     * windows with names and layout, then `list-panes` to discover pane
-     * IDs. This replaces the old delayed `refreshPanes()` + passive
-     * `%output` discovery approach.
+     * Sequence (mirrors TmuxWindowOpener):
+     * 1. list-windows → discover windows with names + layout
+     * 2. list-panes → discover pane IDs
+     * 3. capture-pane for each new pane → pre-load history
+     * 4. emit pane-add events (history already in pendingHistory)
+     *
+     * By the time the UI creates a TmuxPaneTabComponent for a pane,
+     * its history is already captured — no async restore or buffering
+     * is needed at the session level.
      */
     private async discoverWindowsAndPanes(): Promise<void> {
         this.logger.info('Batch discovering windows and panes...')
@@ -295,6 +323,7 @@ export class TmuxController {
             const paneLines = paneResult.split(/[\r\n]+/).map(l => l.trim()).filter(l => l)
             this.logger.info(`Found ${paneLines.length} pane(s) from list-panes`)
 
+            const newPaneIds: Array<{ paneId: number; windowId: number }> = []
             for (const line of paneLines) {
                 const match = line.match(/^%?(\d+)\s+@?(\d+)$/)
                 if (match) {
@@ -315,9 +344,34 @@ export class TmuxController {
 
                     if (!this.knownPanes.has(paneId)) {
                         this.knownPanes.add(paneId)
-                        this.logger.info(`Discovered pane %${paneId} in window @${windowId}`)
-                        this.events.next({ type: 'pane-add', paneId, windowId })
+                        newPaneIds.push({ paneId, windowId })
                     }
+                }
+            }
+
+            // Step 3: Batch-capture history + state for all new panes
+            // (mirrors iTerm2 TmuxWindowOpener)
+            if (newPaneIds.length > 0) {
+                this.logger.info(`Capturing history/state for ${newPaneIds.length} new pane(s)...`)
+                await this.capturePaneSnapshots(newPaneIds)
+            }
+
+            // Step 4: Emit pane-add events — history is now pre-loaded
+            for (const { paneId, windowId } of newPaneIds) {
+                this.logger.info(`Discovered pane %${paneId} in window @${windowId}`)
+                this.events.next({ type: 'pane-add', paneId, windowId })
+            }
+
+            // Step 5: Emit layout-change for all discovered windows so the UI
+            // can build the SplitContainer tree. Without this, syncLayout()
+            // never runs and panes remain registered but unmounted.
+            for (const windowState of this.windowStates.values()) {
+                if (windowState.layout) {
+                    this.events.next({
+                        type: 'layout-change',
+                        windowId: windowState.id,
+                        data: { layout: windowState.layout },
+                    })
                 }
             }
         } catch (e) {
@@ -327,41 +381,122 @@ export class TmuxController {
 
     /**
      * Public alias for discoverWindowsAndPanes.
-     * Used by external callers (context menu, pane tab, session tab)
-     * to trigger a full re-scan after manual actions.
+     * Used by external callers (context menu, session tab ngAfterViewInit)
+     * to trigger a full re-scan. For runtime pane creation (split-window),
+     * discoverPanesFromLayout() handles it via %layout-change instead.
      */
     async refreshPanes(): Promise<void> {
         return this.discoverWindowsAndPanes()
     }
 
     /**
-     * Get information about all panes
+     * Discover new panes from a %layout-change notification (iTerm2-style).
+     *
+     * When tmux sends a layout change, the layout string contains all pane
+     * IDs for that window. We compare against known panes, capture
+     * history/state for any new ones, emit pane-add events, then emit
+     * layout-change so syncLayout() runs after pane tabs exist.
      */
-    async getPaneInfo(): Promise<Array<{ paneId: number; windowId: number; width: number; height: number }>> {
-        try {
-            const result = await this.gateway.sendCommand(
-                'list-panes -a -F "#{pane_id} #{window_id} #{pane_width} #{pane_height}"',
-                TMUX_COMMAND_TOLERATE_ERRORS
-            )
-
-            const panes: Array<{ paneId: number; windowId: number; width: number; height: number }> = []
-            for (const line of result.split('\n')) {
-                const match = line.match(/^%(\d+) @(\d+) (\d+) (\d+)$/)
-                if (match) {
-                    panes.push({
-                        paneId: parseInt(match[1]),
-                        windowId: parseInt(match[2]),
-                        width: parseInt(match[3]),
-                        height: parseInt(match[4])
-                    })
-                }
-            }
-            return panes
-        } catch (e) {
-            this.logger.warn('Failed to get pane info:', e)
-            return []
+    private async discoverPanesFromLayout(
+        windowId: number,
+        layout: string,
+        visibleLayout?: string,
+        zoomed?: boolean
+    ): Promise<void> {
+        // Extract pane IDs from the layout string
+        // Pane IDs appear as trailing numbers in layout leaf nodes like "80x24,0,0,3"
+        // Match pattern: dimension,position,paneId  (paneId is the last number after the last comma)
+        const paneIdSet = new Set<number>()
+        // Match all occurrences of ,\d+ at the end of leaf node specs
+        const leafPattern = /\d+x\d+,\d+,\d+,(\d+)/g
+        let m: RegExpExecArray | null
+        while ((m = leafPattern.exec(layout)) !== null) {
+            paneIdSet.add(parseInt(m[1]))
         }
+
+        if (paneIdSet.size === 0) return
+
+        const windowState = this.windowStates.get(windowId)
+
+        const newPaneIds: Array<{ paneId: number; windowId: number }> = []
+        for (const paneId of paneIdSet) {
+            if (windowState) {
+                windowState.panes.add(paneId)
+            }
+            if (!this.knownPanes.has(paneId)) {
+                this.knownPanes.add(paneId)
+                newPaneIds.push({ paneId, windowId })
+            }
+        }
+
+        if (newPaneIds.length > 0) {
+            this.logger.info(`Discovered ${newPaneIds.length} new pane(s) from layout-change for window @${windowId}`)
+
+            // Capture history + state for new panes (same as discoverWindowsAndPanes Step 3)
+            await this.capturePaneSnapshots(newPaneIds)
+
+            // Emit pane-add events — history is now pre-loaded
+            for (const { paneId, windowId: wid } of newPaneIds) {
+                this.events.next({ type: 'pane-add', paneId, windowId: wid })
+            }
+        }
+
+        // Emit layout-change AFTER pane-add events, so syncLayout() can
+        // create views for newly discovered panes. This ordering is critical:
+        // pane-add → handlePaneAdd (creates pane tab) → layout-change →
+        // syncLayout (attaches view + builds SplitTree).
+        this.events.next({ type: 'layout-change', windowId, data: { layout, visibleLayout, zoomed } })
     }
+
+    /**
+     * Capture history + state for an array of panes.
+     * Shared by discoverWindowsAndPanes() and discoverPanesFromLayout().
+     */
+    private async capturePaneSnapshots(paneIds: Array<{ paneId: number; windowId: number }>): Promise<void> {
+        const stateFormat = [
+            'pane_id=#{pane_id}',
+            'alternate_on=#{alternate_on}',
+            'alternate_saved_x=#{alternate_saved_x}',
+            'alternate_saved_y=#{alternate_saved_y}',
+            'cursor_x=#{cursor_x}',
+            'cursor_y=#{cursor_y}',
+            'scroll_region_upper=#{scroll_region_upper}',
+            'scroll_region_lower=#{scroll_region_lower}',
+            'pane_tabs=#{pane_tabs}',
+            'cursor_flag=#{cursor_flag}',
+            'insert_flag=#{insert_flag}',
+            'keypad_cursor_flag=#{keypad_cursor_flag}',
+            'keypad_flag=#{keypad_flag}',
+            'wrap_flag=#{wrap_flag}',
+            'bracket_paste_flag=#{bracket_paste_flag}',
+        ].join('\t')
+
+        const captures = paneIds.map(async ({ paneId }) => {
+            try {
+                const [history, altHistory, stateResult] = await Promise.all([
+                    this.gateway.sendCommand(
+                        `capture-pane -peqJN -S -10000 -t %${paneId}`,
+                        TMUX_COMMAND_TOLERATE_ERRORS
+                    ),
+                    this.gateway.sendCommand(
+                        `capture-pane -peqJN -a -S -10000 -t %${paneId}`,
+                        TMUX_COMMAND_TOLERATE_ERRORS
+                    ),
+                    this.gateway.sendCommand(
+                        `list-panes -t %${paneId} -F "${stateFormat}"`,
+                        TMUX_COMMAND_TOLERATE_ERRORS
+                    ),
+                ])
+                const state = this.parsePaneState(stateResult, paneId)
+                this.pendingSnapshots.set(paneId, { history, altHistory, state })
+            } catch (e) {
+                this.logger.warn(`Failed to capture snapshot for pane %${paneId}:`, e)
+            }
+        })
+        await Promise.all(captures)
+    }
+
+
 
     // --- Pane Management ---
 
@@ -369,19 +504,20 @@ export class TmuxController {
         this.paneSessions.set(paneId, session)
         this.knownPanes.add(paneId)
 
-        // Discard pending output — restorePaneHistory (capture-pane -S-)
-        // will restore the full scrollback including the visible content.
-        // Flushing pending output before capture-pane would duplicate the
-        // visible area, inflating total output and pushing the oldest
-        // history lines out of the terminal's scrollback buffer.
-        this.pendingPaneOutput.delete(paneId)
+        // Flush any buffered output that arrived before registration
+        const buffered = this.pendingPaneOutput.get(paneId)
+        if (buffered) {
+            for (const data of buffered) {
+                session.feedOutput(data)
+            }
+            this.pendingPaneOutput.delete(paneId)
+        }
     }
 
     unregisterPane(paneId: number): void {
         this.paneSessions.delete(paneId)
         this.pendingPaneOutput.delete(paneId)
-        this.restoringHistoryPanes.delete(paneId)
-        this.restoreBuffer.delete(paneId)
+        this.pendingSnapshots.delete(paneId)
     }
 
     getPaneSession(paneId: number): TmuxPaneSession | undefined {
@@ -407,67 +543,155 @@ export class TmuxController {
         this.gateway.sendKeys(data, paneId)
     }
 
-    /** Check if a pane is currently restoring history */
-    isRestoringHistory(paneId: number): boolean {
-        return this.restoringHistoryPanes.has(paneId)
-    }
-
-    /** Buffer output that arrives during history restore */
-    bufferRestoreOutput(paneId: number, data: Buffer): void {
-        if (!this.restoreBuffer.has(paneId)) {
-            this.restoreBuffer.set(paneId, [])
-        }
-        this.restoreBuffer.get(paneId)!.push(data)
-    }
-
+    /**
+     * Restore pane history.
+     *
+     * History + state are pre-loaded during discoverWindowsAndPanes()
+     * (stored in pendingSnapshots) — this is instant, no capture-pane needed.
+     * Both initial attach and runtime panes (split-window etc.) go through
+     * discoverWindowsAndPanes() before pane-add events are emitted, so
+     * pendingSnapshots is always populated by the time this runs.
+     *
+     * Restores (like iTerm2 setTmuxHistory:altHistory:state:):
+     * 1. Primary screen history
+     * 2. Alternate screen history (via CSI ?1047h / escape sequences)
+     * 3. Terminal state (cursor, scroll region, modes)
+     */
     async restorePaneHistory(paneId: number): Promise<void> {
-        this.logger.info(`Restoring history for pane %${paneId}`)
+        const snapshot = this.pendingSnapshots.get(paneId)
+        if (!snapshot) {
+            this.logger.warn(`No pre-loaded snapshot for pane %${paneId}, skipping`)
+            return
+        }
+        this.pendingSnapshots.delete(paneId)
 
-        // Enable buffering: any %output arriving while we wait for
-        // capture-pane will be buffered instead of sent to the terminal.
-        // This prevents duplication because capture-pane already includes
-        // all visible content at the time it snapshots the pane.
-        this.restoringHistoryPanes.add(paneId)
-        this.restoreBuffer.set(paneId, [])
+        const session = this.paneSessions.get(paneId)
+        if (!session) return
 
-        try {
-            // capture-pane options:
-            // -e: include escape sequences (colors, attributes)
-            // -p: output to stdout
-            // -J: join wrapped lines (matches iTerm2's capture-pane flags)
-            // -S-: start from beginning of history
-            const output = await this.gateway.sendCommand(
-                `capture-pane -peJS- -t %${paneId}`,
-                TMUX_COMMAND_TOLERATE_ERRORS
-            )
+        // 1. Primary screen history
+        if (snapshot.history) {
+            const normalized = snapshot.history.replace(/\n/g, '\r\n')
+            session.feedOutput(Buffer.from(normalized, 'utf-8'))
+        }
 
-            if (output && this.paneSessions.has(paneId)) {
-                // capture-pane outputs Unix-style line endings (\n)
-                // but terminals need \r\n (CR+LF) for proper display:
-                // - \r (Carriage Return): move cursor to start of line
-                // - \n (Line Feed): move cursor down one line
-                // Without \r, lines will start at the column where the previous line ended
-                const normalizedOutput = output.replace(/\n/g, '\r\n')
-                const buffer = Buffer.from(normalizedOutput, 'utf-8')
-                this.paneSessions.get(paneId)?.writeCapturedHistory(buffer)
-            }
-        } catch (e) {
-            this.logger.warn(`Failed to restore history for pane %${paneId}:`, e)
-        } finally {
-            // Disable buffering and discard any output that arrived during
-            // the restore.  We cannot distinguish output that arrived before
-            // the capture-pane snapshot (already in the response → would
-            // duplicate) from output that arrived after (truly new → would
-            // lose).  Since the snapshot→%end window is tiny and the most
-            // likely content there is the shell prompt (already captured),
-            // discarding is the safe trade-off to avoid visible duplication.
-            this.restoringHistoryPanes.delete(paneId)
-            const buffered = this.restoreBuffer.get(paneId) || []
-            this.restoreBuffer.delete(paneId)
-            if (buffered.length > 0) {
-                this.logger.info(`Discarding ${buffered.length} buffered output chunk(s) for pane %${paneId} (included in capture-pane)`)
+        // 2. Alternate screen history
+        //    Enter alternate screen → write history → return to primary screen.
+        //    CSI ?1047h = alternate screen buffer (with clear)
+        //    CSI ?1047l = return to primary screen
+        if (snapshot.altHistory && snapshot.altHistory.trim()) {
+            const enterAlt = '\x1b[?1047h'
+            const leaveAlt = '\x1b[?1047l'
+            const normalized = snapshot.altHistory.replace(/\n/g, '\r\n')
+            session.feedOutput(Buffer.from(enterAlt + normalized + leaveAlt, 'utf-8'))
+        }
+
+        // 3. Apply terminal state (cursor position, scroll region, modes)
+        this.applyPaneState(session, snapshot.state)
+    }
+
+    /**
+     * Parse pane state from `list-panes -F` response.
+     * Mirrors iTerm2 TmuxStateParser.
+     */
+    private parsePaneState(response: string, expectedPaneId: number): PaneState {
+        const state: PaneState = {
+            paneId: expectedPaneId,
+            cursorX: 0, cursorY: 0,
+            alternateOn: false,
+            alternateSavedX: 0, alternateSavedY: 0,
+            scrollRegionUpper: 0, scrollRegionLower: 0,
+            wrapFlag: true, cursorFlag: true,
+            insertFlag: false, bracketPasteFlag: false,
+            keypadCursorFlag: false, keypadFlag: false,
+            paneTabs: [],
+        }
+
+        const line = response.split(/[\r\n]+/).find(l => l.includes(`pane_id=`))
+        if (!line) return state
+
+        for (const part of line.split('\t')) {
+            const eqIdx = part.indexOf('=')
+            if (eqIdx < 0) continue
+            const key = part.substring(0, eqIdx)
+            const value = part.substring(eqIdx + 1)
+            const n = parseInt(value)
+            switch (key) {
+                case 'pane_id': state.paneId = n; break
+                case 'cursor_x': state.cursorX = n; break
+                case 'cursor_y': state.cursorY = n; break
+                case 'alternate_on': state.alternateOn = n === 1; break
+                case 'alternate_saved_x': state.alternateSavedX = n; break
+                case 'alternate_saved_y': state.alternateSavedY = n; break
+                case 'scroll_region_upper': state.scrollRegionUpper = n; break
+                case 'scroll_region_lower': state.scrollRegionLower = n; break
+                case 'pane_tabs': state.paneTabs = value.split(',').map(Number).filter(x => !isNaN(x)); break
+                case 'cursor_flag': state.cursorFlag = n === 1; break
+                case 'insert_flag': state.insertFlag = n === 1; break
+                case 'keypad_cursor_flag': state.keypadCursorFlag = n === 1; break
+                case 'keypad_flag': state.keypadFlag = n === 1; break
+                case 'wrap_flag': state.wrapFlag = n === 1; break
+                case 'bracket_paste_flag': state.bracketPasteFlag = n === 1; break
             }
         }
+        return state
+    }
+
+    /**
+     * Apply parsed pane state to the terminal via ANSI escape sequences.
+     * Mirrors iTerm2 VT100ScreenMutableState.setTmuxState:.
+     */
+    private applyPaneState(session: TmuxPaneSession, state: PaneState): void {
+        // Build a sequence of escape codes to restore terminal state.
+        // Mirrors iTerm2 VT100ScreenMutableState.setTmuxState:.
+        const csi = (s: string) => `\x1b[${s}`
+        const esc = (s: string) => `\x1b${s}`
+        let seq = ''
+
+        // Enter alternate screen if the pane was on it
+        if (state.alternateOn) {
+            seq += csi('?1047h')
+            // Restore saved cursor position for primary screen
+            seq += csi(`${state.alternateSavedY + 1};${state.alternateSavedX + 1}H`)
+        }
+
+        // Set scroll region (DECSTBM)
+        if (state.scrollRegionUpper > 0 || state.scrollRegionLower > 0) {
+            seq += csi(`${state.scrollRegionUpper + 1};${state.scrollRegionLower + 1}r`)
+        }
+
+        // Restore cursor position (CUP)
+        seq += csi(`${state.cursorY + 1};${state.cursorX + 1}H`)
+
+        // Cursor visibility (DECTCEM)
+        seq += state.cursorFlag ? csi('?25h') : csi('?25l')
+
+        // Insert mode (IRM)
+        seq += state.insertFlag ? csi('4h') : csi('4l')
+
+        // Application cursor keys (DECCKM)
+        seq += state.keypadCursorFlag ? csi('?1h') : csi('?1l')
+
+        // Application keypad mode (DECKPAM / DECKPNM)
+        seq += state.keypadFlag ? esc('=') : esc('>')
+
+        // Bracketed paste mode
+        seq += state.bracketPasteFlag ? csi('?2004h') : csi('?2004l')
+
+        // Wrap mode (DECAWM)
+        seq += state.wrapFlag ? csi('?7h') : csi('?7l')
+
+        // Tab stops (HTS / TBC)
+        // TBC 3 = clear all tab stops, then HTS at each position
+        seq += csi('3g')
+        for (const col of state.paneTabs) {
+            seq += csi(`${col + 1}G`) // CUP to column
+            seq += esc('H')           // HTS
+        }
+
+        // Reset cursor back to final position (tab stop setup moves it)
+        seq += csi(`${state.cursorY + 1};${state.cursorX + 1}H`)
+
+        session.feedOutput(Buffer.from(seq, 'utf-8'))
     }
 
     async killPane(paneId: number): Promise<void> {
@@ -547,11 +771,6 @@ export class TmuxController {
 
     getSessionId(): number {
         return this.sessionId
-    }
-
-    getWindowPanes(windowId: number): number[] {
-        const state = this.windowStates.get(windowId)
-        return state ? Array.from(state.panes) : []
     }
 
     getWindowState(windowId: number): WindowState | undefined {
