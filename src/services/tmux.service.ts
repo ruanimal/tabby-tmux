@@ -1,5 +1,5 @@
 import { Injectable, Injector } from '@angular/core'
-import { AppService, LogService, Logger } from 'tabby-core'
+import { AppService, LogService, Logger, ConfigService } from 'tabby-core'
 import { BaseTerminalTabComponent, SessionMiddleware } from 'tabby-terminal'
 import { Subject, Subscription } from 'rxjs'
 import { TmuxController } from '../session'
@@ -65,6 +65,7 @@ export class TmuxService {
     constructor(
         private injector: Injector,
         private appService: AppService,
+        private configService: ConfigService,
         log: LogService,
     ) {
         this.logger = log.create('tmux-service')
@@ -238,7 +239,8 @@ export class TmuxService {
             this.logger,
             this.injector,
             (data: string) => session.write(Buffer.from(data)),
-            () => this.disconnectContext(context)
+            () => this.disconnectContext(context),
+            this.configService
         )
 
         // Subscribe to the interceptor's raw output to parse tmux control mode.
@@ -258,7 +260,8 @@ export class TmuxService {
         this.setupControllerEvents(context)
 
         // Send the tmux -CC command to the terminal
-        session.write(Buffer.from('tmux -CC new -A -s default\n'))
+        const sessionName = this.configService.store.tmuxPlugin?.defaultSessionName ?? 'default'
+        session.write(Buffer.from(`tmux -CC new -A -s ${sessionName}\n`))
     }
 
     // replaceTabWithTmuxWindow removed as we open new tabs for windows instead

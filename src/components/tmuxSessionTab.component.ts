@@ -1,6 +1,6 @@
 import { Component, Injector, Input, OnInit, OnDestroy, ChangeDetectorRef, ElementRef } from '@angular/core'
 import { Subscription } from 'rxjs'
-import { SplitTabComponent, SplitContainer, LogService, Logger, TabsService, HotkeysService, GetRecoveryTokenOptions, RecoveryToken } from 'tabby-core'
+import { SplitTabComponent, SplitContainer, LogService, Logger, TabsService, HotkeysService, GetRecoveryTokenOptions, RecoveryToken, ConfigService } from 'tabby-core'
 import { TabRecoveryService } from 'tabby-core'
 import { TmuxController } from '../session'
 import { TmuxService } from '../services/tmux.service'
@@ -157,6 +157,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     constructor(
         injector: Injector,
         private tmuxService: TmuxService,
+        private configService: ConfigService,
         tabsService: TabsService,
         private cdr: ChangeDetectorRef,
         private hostElement: ElementRef,
@@ -993,10 +994,11 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      */
     private scheduleRefreshClientSize(): void {
         if (this._resizeTimer) clearTimeout(this._resizeTimer)
+        const debounceMs = this.configService.store.tmuxPlugin?.resizeDebounceMs ?? 150
         this._resizeTimer = setTimeout(() => {
             this._resizeTimer = null
             this.refreshClientSize()
-        }, 150)
+        }, debounceMs)
     }
 
     // ─── Border-based pane separator ────────────────────────────────────────

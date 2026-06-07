@@ -1,10 +1,11 @@
 import { Subject } from 'rxjs'
-import { Logger } from 'tabby-core'
+import { Logger, ConfigService } from 'tabby-core'
 
 // Command flags
 export const TMUX_COMMAND_TOLERATE_ERRORS = 1 << 0
 export const TMUX_COMMAND_WANTS_DATA = 1 << 1
-const COMMAND_TIMEOUT_MS = 30_000
+const DEFAULT_COMMAND_TIMEOUT_MS = 30_000
+const DEFAULT_SEND_KEYS_CHUNK_SIZE = 200
 
 interface PendingCommand {
     id: number
@@ -72,8 +73,17 @@ export class TmuxGateway {
 
     constructor(
         private logger: Logger,
-        private writer: (data: string) => void
+        private writer: (data: string) => void,
+        private configService?: ConfigService
     ) { }
+
+    private get commandTimeoutMs (): number {
+        return this.configService?.store.tmuxPlugin?.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
+    }
+
+    private get sendKeysChunkSize (): number {
+        return this.configService?.store.tmuxPlugin?.sendKeysChunkSize ?? DEFAULT_SEND_KEYS_CHUNK_SIZE
+    }
 
     /**
      * Send a single command and wait for response
@@ -103,8 +113,8 @@ export class TmuxGateway {
             timer = setTimeout(() => {
                 // Remove the timed-out command from the queue so it won't
                 // consume a later response and cause command-id mismatch.
-                reject(new Error(`Command timed out after ${COMMAND_TIMEOUT_MS}ms: ${command}`))
-            }, COMMAND_TIMEOUT_MS)
+                reject(new Error(`Command timed out after ${this.commandTimeoutMs}ms: ${command}`))
+            }, this.commandTimeoutMs)
         })
 
         // Clean up timer when original settles
@@ -158,9 +168,8 @@ export class TmuxGateway {
         const hex = data.toString('hex')
         if (hex.length > 0) {
             // Split into chunks to avoid command length limits
-            const chunkSize = 200 // ~100 bytes per chunk
-            for (let i = 0; i < hex.length; i += chunkSize) {
-                const chunk = hex.substring(i, i + chunkSize)
+            for (let i = 0; i < hex.length; i += this.sendKeysChunkSize) {
+                const chunk = hex.substring(i, i + this.sendKeysChunkSize)
                 const hexBytes = chunk.match(/.{2}/g)?.join(' ') || ''
                 // Write directly — bypasses command queue for zero-latency input
                 this.write(`send-keys -t %${paneId} -H ${hexBytes}\r`)

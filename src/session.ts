@@ -1,6 +1,6 @@
 import { Subject } from 'rxjs'
 import { BaseSession } from 'tabby-terminal'
-import { Logger } from 'tabby-core'
+import { Logger, ConfigService } from 'tabby-core'
 import { Injector } from '@angular/core'
 import { TmuxGateway, TMUX_COMMAND_TOLERATE_ERRORS } from './gateway'
 
@@ -246,9 +246,10 @@ export class TmuxController {
         private logger: Logger,
         _injector: Injector,  // eslint-disable-line @typescript-eslint/no-unused-vars
         writer: (data: string) => void,
-        private closer: () => void
+        private closer: () => void,
+        configService?: ConfigService
     ) {
-        this.gateway = new TmuxGateway(logger, writer)
+        this.gateway = new TmuxGateway(logger, writer, configService)
         this.setupGatewaySubscriptions()
     }
 
