@@ -48,6 +48,12 @@ export class TmuxPaneSession extends BaseSession {
      */
     pendingAltRestore: { content: string; cursorY: number; cursorX: number; modes: string } | null = null
 
+    /**
+     * Incomplete screen-title sequence (ESC k ... ESC \) spanning
+     * multiple feedOutput calls.  Buffered until the closing ST arrives.
+     */
+    private _pendingTitleSeq: Buffer | null = null
+
     constructor(
         logger: Logger,
         private controller: TmuxController,
@@ -95,6 +101,7 @@ export class TmuxPaneSession extends BaseSession {
 
     async destroy(): Promise<void> {
         this.pendingAltRestore = null
+        this._pendingTitleSeq = null
         await super.destroy()
         this.controller.unregisterPane(this.paneId)
     }
@@ -114,9 +121,94 @@ export class TmuxPaneSession extends BaseSession {
     /**
      * Public wrapper for the protected emitOutput().
      * Used by TmuxController to deliver history and buffered output.
+     *
+     * Filters out screen/tmux "set window title" sequences (ESC k ... ESC \)
+     * which xterm.js does not recognize. Without filtering, zsh precmd/preexec
+     * hooks that set the terminal title via `print -Pn "\ek%s\e\\"` would leak
+     * the title text as visible output (e.g. `echo111` instead of `111`).
      */
     feedOutput(data: Buffer): void {
-        this.emitOutput(data)
+        data = this.filterScreenTitleSequences(data)
+        if (data.length > 0) {
+            this.emitOutput(data)
+        }
+    }
+
+    /**
+     * Strip screen/tmux "set window title" sequences (ESC k ... ESC \)
+     * from the output stream.
+     *
+     * In screen/tmux, `ESC k <title> ESC \` sets the window/tab title.
+     * tmux processes these internally but also forwards them verbatim to
+     * control-mode clients. xterm.js does NOT handle this sequence — it
+     * only recognizes `ESC ] ... BEL/ST` (OSC) — so the title text leaks
+     * as visible content (e.g. the command name appears before output).
+     *
+     * Handles sequences that span multiple feedOutput calls by buffering
+     * the incomplete portion until the closing ST (ESC \) arrives.
+     */
+    private filterScreenTitleSequences(data: Buffer): Buffer {
+        // Prepend leftover from previous call
+        if (this._pendingTitleSeq) {
+            data = Buffer.concat([this._pendingTitleSeq, data])
+            this._pendingTitleSeq = null
+        }
+
+        const ESC = 0x1b
+        const parts: Buffer[] = []
+        let pos = 0
+
+        while (pos < data.length) {
+            // Find next ESC k (0x1b 0x6b)
+            let startIdx = -1
+            for (let i = pos; i < data.length - 1; i++) {
+                if (data[i] === ESC && data[i + 1] === 0x6b) {
+                    startIdx = i
+                    break
+                }
+            }
+
+            if (startIdx < 0) {
+                // No more title sequences — emit the rest.
+                // Buffer a trailing ESC (0x1b) in case the next call
+                // starts with 0x6b ('k'), forming a split ESC k pair.
+                const tail = data[data.length - 1]
+                if (tail === ESC) {
+                    parts.push(data.subarray(pos, data.length - 1))
+                    this._pendingTitleSeq = data.subarray(data.length - 1)
+                } else {
+                    parts.push(data.subarray(pos))
+                }
+                break
+            }
+
+            // Emit data before the title sequence
+            if (startIdx > pos) {
+                parts.push(data.subarray(pos, startIdx))
+            }
+
+            // Search for ESC \ (ST: 0x1b 0x5c) after ESC k
+            let stIdx = -1
+            for (let i = startIdx + 2; i < data.length - 1; i++) {
+                if (data[i] === ESC && data[i + 1] === 0x5c) {
+                    stIdx = i
+                    break
+                }
+            }
+
+            if (stIdx >= 0) {
+                // Complete sequence found — skip it entirely
+                pos = stIdx + 2
+            } else {
+                // Incomplete sequence — buffer from ESC k onwards
+                this._pendingTitleSeq = data.subarray(startIdx)
+                break
+            }
+        }
+
+        if (parts.length === 0) return Buffer.alloc(0)
+        if (parts.length === 1) return parts[0]
+        return Buffer.concat(parts)
     }
 }
 
