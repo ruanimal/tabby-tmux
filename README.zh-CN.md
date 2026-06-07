@@ -32,9 +32,10 @@ npm install tabby-tmux
 
 ## 使用
 
-1. 在 Tabby 中新建 profile，选择 **Tmux** 类型
-2. 配置 tmux session 名称（默认 `default`）
-3. 连接后，底部会显示 tmux window 栏，可切换 window 和 pane
+1. 在 Tabby 中打开任意终端标签页
+2. 右键点击标签页 → **Enter Tmux Mode**
+3. 底部出现 tmux window 栏，可切换 window 和 pane
+4. 右键 → **Exit Tmux Mode** 退出 tmux 模式
 
 ### 开发调试
 
@@ -58,35 +59,6 @@ npm install tabby-tmux tabby-trzsz
 ```
 
 > **提示：** 通过 WebSocket 终端上传文件时（如使用 [tabby-ws-term](https://github.com/ruanimal/tabby-ws-term)），建议使用 `trzsz -B 10K` 以提高兼容性。
-
-## 技术架构
-
-```
-TmuxService
-├── TmuxGateway        — tmux Control Mode 协议解析
-├── TmuxController     — 会话状态管理、事件分发
-├── TmuxSessionTab     — 继承 SplitTabComponent，管理 window/pane 映射
-├── TmuxWindowBar      — 底部窗口切换栏
-└── TmuxPaneTab        — 继承 BaseTerminalTabComponent，单个面板
-```
-
-### 数据流
-
-```
-用户输入 → TmuxPaneTab → paneSession.feedFromTerminal()
-  → controller.writeToPane(paneId, data)
-  → gateway.sendKeys(hex, paneId) → PTY → tmux
-
-tmux 输出 → PTY → controller.handleLine()
-  → gateway.executeLine() → 解析协议
-  → %output → paneSession.emitOutput()
-  → %layout-change → event → SessionTab.syncLayout()
-```
-
-## 技术栈
-
-- **框架**: Angular 15 + TypeScript 4.9
-- **依赖**: `tabby-core`, `tabby-terminal`, `tabby-local`, `rxjs`
 
 ## License
 

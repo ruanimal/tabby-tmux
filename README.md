@@ -32,9 +32,10 @@ npm install tabby-tmux
 
 ## Usage
 
-1. Create a new profile in Tabby, select the **Tmux** type
-2. Configure the tmux session name (default: `default`)
-3. Once connected, the bottom window bar shows tmux windows — switch between windows and panes from there
+1. Open any terminal tab in Tabby
+2. Right-click the tab → **Enter Tmux Mode**
+3. The bottom window bar appears — switch between tmux windows and panes from there
+4. Right-click → **Exit Tmux Mode** to detach
 
 ### Development
 
@@ -58,35 +59,6 @@ npm install tabby-tmux tabby-trzsz
 ```
 
 > **Note:** When uploading files over WebSocket terminals (e.g. via [tabby-ws-term](https://github.com/ruanimal/tabby-ws-term)), use `trzsz -B 10K` to improve compatibility.
-
-## Architecture
-
-```
-TmuxService
-├── TmuxGateway        — tmux Control Mode protocol parser
-├── TmuxController     — session state management & event dispatch
-├── TmuxSessionTab     — extends SplitTabComponent, manages window/pane mapping
-├── TmuxWindowBar      — collapsible bottom window switcher bar
-└── TmuxPaneTab        — extends BaseTerminalTabComponent, single pane
-```
-
-### Data flow
-
-```
-User input → TmuxPaneTab → paneSession.feedFromTerminal()
-  → controller.writeToPane(paneId, data)
-  → gateway.sendKeys(hex, paneId) → PTY → tmux
-
-tmux output → PTY → controller.handleLine()
-  → gateway.executeLine() → parse protocol
-  → %output → paneSession.emitOutput()
-  → %layout-change → event → SessionTab.syncLayout()
-```
-
-## Tech Stack
-
-- **Framework**: Angular 15 + TypeScript 4.9
-- **Dependencies**: `tabby-core`, `tabby-terminal`, `tabby-local`, `rxjs`
 
 ## License
 
