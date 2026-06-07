@@ -141,12 +141,6 @@ export class TmuxController {
         // Handle pane output
         this.gateway.output$.subscribe(({ paneId, data }) => {
             this.logger.info(`Session received output for pane %${paneId}: ${data.length} bytes`)
-            // Discover panes from output - this catches panes we didn't know about
-            if (!this.knownPanes.has(paneId)) {
-                this.knownPanes.add(paneId)
-                this.logger.info(`Discovered pane %${paneId} from output (new)`)
-                this.events.next({ type: 'pane-add', paneId })
-            }
 
             if (this.paneSessions.has(paneId)) {
                 this.logger.info(`Dispatching output to existing session for pane %${paneId}`)
@@ -162,25 +156,30 @@ export class TmuxController {
         })
 
         // Handle session changes - this is our main initialization point
+        // Like iTerm2, we immediately batch-discover all windows and panes
+        // instead of relying on delayed list-panes or passive %output discovery.
         this.gateway.sessionChanged$.subscribe(({ sessionName, sessionId }) => {
             this.sessionName = sessionName
             this.sessionId = sessionId
             this.attached = true
             this.logger.info(`Attached to session: ${sessionName} ($${sessionId})`)
             this.events.next({ type: 'session-changed', data: { sessionName, sessionId } })
-            // Refresh panes after session change - this is when we discover existing panes
-            setTimeout(() => this.refreshPanes(), 100)
+            // Immediate batch discovery — no setTimeout delay
+            this.discoverWindowsAndPanes()
         })
 
         // Handle window events
         this.gateway.windowAdd$.subscribe(windowId => {
-            this.windowStates.set(windowId, {
-                id: windowId,
-                name: `Window ${windowId}`,
-                panes: new Set()
-            })
+            if (!this.windowStates.has(windowId)) {
+                this.windowStates.set(windowId, {
+                    id: windowId,
+                    name: `Window ${windowId}`,
+                    panes: new Set()
+                })
+            }
             this.events.next({ type: 'window-add', windowId })
-            this.refreshPanes()
+            // Pane discovery is handled by %layout-change and %output;
+            // no need to re-scan all panes on every window-add.
         })
 
         this.gateway.windowClose$.subscribe(windowId => {
@@ -235,7 +234,7 @@ export class TmuxController {
         // Handle initialization
         this.gateway.initialized$.subscribe(() => {
             this.events.next({ type: 'initialized' })
-            this.refreshPanes()
+            this.discoverWindowsAndPanes()
         })
     }
 
@@ -247,61 +246,92 @@ export class TmuxController {
     }
 
     /**
-     * Refresh the list of panes
+     * Batch-discover all windows and panes (iTerm2-style).
+     *
+     * Called once on %session-changed. Uses `list-windows` to discover
+     * windows with names and layout, then `list-panes` to discover pane
+     * IDs. This replaces the old delayed `refreshPanes()` + passive
+     * `%output` discovery approach.
      */
-    async refreshPanes(): Promise<void> {
-        this.logger.info('Refreshing panes list...')
+    private async discoverWindowsAndPanes(): Promise<void> {
+        this.logger.info('Batch discovering windows and panes...')
         try {
-            const result = await this.gateway.sendCommand(
+            // Step 1: Discover all windows with names and layout
+            const winResult = await this.gateway.sendCommand(
+                'list-windows -F "#{window_id} #{window_name} #{window_layout}"',
+                TMUX_COMMAND_TOLERATE_ERRORS
+            )
+            const winLines = winResult.split(/[\r\n]+/).map(l => l.trim()).filter(l => l)
+            this.logger.info(`Found ${winLines.length} window(s) from list-windows`)
+
+            for (const line of winLines) {
+                // Format: "@0 mywindow 1234,0x0,0,0{60x24,0,0,1}"
+                const match = line.match(/^@?(\d+)\s+(.+?)\s+(.+)$/)
+                if (match) {
+                    const windowId = parseInt(match[1])
+                    const windowName = match[2]
+                    const layout = match[3]
+                    if (!this.windowStates.has(windowId)) {
+                        this.windowStates.set(windowId, {
+                            id: windowId,
+                            name: windowName,
+                            layout,
+                            panes: new Set()
+                        })
+                        this.events.next({ type: 'window-add', windowId })
+                    } else {
+                        const state = this.windowStates.get(windowId)!
+                        state.name = windowName
+                        state.layout = layout
+                    }
+                }
+            }
+
+            // Step 2: Discover all panes and map to windows
+            const paneResult = await this.gateway.sendCommand(
                 'list-panes -s -F "#{pane_id} #{window_id}"',
                 TMUX_COMMAND_TOLERATE_ERRORS
             )
+            const paneLines = paneResult.split(/[\r\n]+/).map(l => l.trim()).filter(l => l)
+            this.logger.info(`Found ${paneLines.length} pane(s) from list-panes`)
 
-            this.logger.info('list-panes result:', result)
-            // Split by newlines and strip CR characters
-            const lines = result.split(/[\r\n]+/).map(l => l.trim()).filter(l => l)
-            this.logger.info(`Found ${lines.length} pane(s) from list-panes:`, lines)
-
-            for (const line of lines) {
-                // Match "%0 1" format (pane_id window_id)
+            for (const line of paneLines) {
                 const match = line.match(/^%?(\d+)\s+@?(\d+)$/)
                 if (match) {
                     const paneId = parseInt(match[1])
                     const windowId = parseInt(match[2])
 
-                    // Update window state
                     let windowState = this.windowStates.get(windowId)
                     if (!windowState) {
-                        // If we discovered a pane for an unknown window, create a stub state
-                        // The real window-add event might come later or already happened
                         windowState = {
                             id: windowId,
                             name: `Window ${windowId}`,
                             panes: new Set()
                         }
                         this.windowStates.set(windowId, windowState)
-                        // Emit window-add so the service knows about this window
                         this.events.next({ type: 'window-add', windowId })
                     }
                     windowState.panes.add(paneId)
 
-                    this.logger.info(`Matched pane ID: ${paneId} window ID: ${windowId}, known=${this.knownPanes.has(paneId)}`)
-
                     if (!this.knownPanes.has(paneId)) {
                         this.knownPanes.add(paneId)
-                        this.logger.info(`Discovered pane %${paneId} from list-panes, emitting event`)
+                        this.logger.info(`Discovered pane %${paneId} in window @${windowId}`)
                         this.events.next({ type: 'pane-add', paneId, windowId })
-                    } else {
-                        // Check if window association changed (unlikely in normal operation but possible)
-                        this.events.next({ type: 'pane-update', paneId, windowId })
                     }
-                } else {
-                    this.logger.info(`Unmatched pane line: "${line}"`)
                 }
             }
         } catch (e) {
-            this.logger.warn('Failed to refresh panes:', e)
+            this.logger.warn('Failed to batch discover windows/panes:', e)
         }
+    }
+
+    /**
+     * Public alias for discoverWindowsAndPanes.
+     * Used by external callers (context menu, pane tab, session tab)
+     * to trigger a full re-scan after manual actions.
+     */
+    async refreshPanes(): Promise<void> {
+        return this.discoverWindowsAndPanes()
     }
 
     /**
