@@ -225,8 +225,6 @@ export class TmuxService {
             subscriptions: []
         }
 
-        let buffer = ''
-
         // Insert a tmux output interceptor at position 0 of the session's
         // middleware chain.  This captures raw output for the gateway and
         // prevents trzsz (or other) middleware on the original session from
@@ -243,16 +241,11 @@ export class TmuxService {
             () => this.disconnectContext(context)
         )
 
-        // Subscribe to the interceptor's raw output to parse tmux control mode
+        // Subscribe to the interceptor's raw output to parse tmux control mode.
+        // Feed raw buffers directly — the gateway handles line buffering internally
+        // via executeData(), which properly handles TCP fragment boundaries.
         context.subscriptions.push(interceptor.rawOutput$.subscribe((data: Buffer) => {
-            buffer += data.toString()
-            const lines = buffer.split('\n')
-            if (lines.length > 1) {
-                buffer = lines.pop()!
-                for (const line of lines) {
-                    context.controller.handleLine(line)
-                }
-            }
+            context.controller.handleData(data)
         }))
 
         // Handle terminal tab closure (disconnect on close)

@@ -4,6 +4,7 @@ import { Logger } from 'tabby-core'
 // Command flags
 export const TMUX_COMMAND_TOLERATE_ERRORS = 1 << 0
 export const TMUX_COMMAND_WANTS_DATA = 1 << 1
+const COMMAND_TIMEOUT_MS = 30_000
 
 interface PendingCommand {
     id: number
@@ -46,6 +47,10 @@ export class TmuxGateway {
     private detachSent = false
     private acceptNotifications = false
     private initialized = false
+    /** Number of fire-and-forget writes whose %begin/%end responses need consuming */
+    private directWritesPending = 0
+    /** Incomplete line buffer for byte-level DCS parsing */
+    private lineBuffer = ''
 
     public minimumServerVersion: number | null = null
     public maximumServerVersion: number | null = null
@@ -77,7 +82,7 @@ export class TmuxGateway {
             throw new Error('Gateway disconnected')
         }
 
-        return new Promise((resolve, reject) => {
+        const original = new Promise<string>((resolve, reject) => {
             const cmd: PendingCommand = {
                 id: this.nextCommandId++,
                 command,
@@ -90,6 +95,21 @@ export class TmuxGateway {
             this.write(command + '\r')
             this.logger.debug(`Sent command: ${command}`)
         })
+
+        // Race against timeout — if tmux never responds, reject instead of hanging
+        let timer: ReturnType<typeof setTimeout>
+        const timeout = new Promise<string>((_, reject) => {
+            timer = setTimeout(() => {
+                // Remove the timed-out command from the queue so it won't
+                // consume a later response and cause command-id mismatch.
+                reject(new Error(`Command timed out after ${COMMAND_TIMEOUT_MS}ms: ${command}`))
+            }, COMMAND_TIMEOUT_MS)
+        })
+
+        // Clean up timer when original settles
+        original.then(() => clearTimeout(timer!), () => clearTimeout(timer!))
+
+        return Promise.race([original, timeout])
     }
 
     /**
@@ -124,28 +144,26 @@ export class TmuxGateway {
     }
 
     /**
-     * Send keystrokes to a specific pane
+     * Send keystrokes to a specific pane.
+     *
+     * Writes directly to the PTY — bypasses the command queue for zero-latency
+     * input.  tmux will still send %begin/%end for the send-keys command;
+     * parseBegin() tracks these via directWritesPending so they are consumed
+     * without trying to dequeue a queued command.
      */
     sendKeys(data: Buffer, paneId: number): void {
         if (this.disconnected) return
 
-        // Use hex encoding for safety
         const hex = data.toString('hex')
         if (hex.length > 0) {
             // Split into chunks to avoid command length limits
             const chunkSize = 200 // ~100 bytes per chunk
             for (let i = 0; i < hex.length; i += chunkSize) {
                 const chunk = hex.substring(i, i + chunkSize)
-                // Format: send -t %pane -H xx xx xx
                 const hexBytes = chunk.match(/.{2}/g)?.join(' ') || ''
-                // We MUST use sendCommand to keep the command queue in sync,
-                // otherwise the response (%begin/%end) will be mismatched or unexpected
-                this.sendCommand(
-                    `send-keys -t %${paneId} -H ${hexBytes}`,
-                    TMUX_COMMAND_TOLERATE_ERRORS
-                ).catch(e => {
-                    this.logger.error(`Failed to send keys to pane %${paneId}:`, e)
-                })
+                // Write directly — bypasses command queue for zero-latency input
+                this.write(`send-keys -t %${paneId} -H ${hexBytes}\r`)
+                this.directWritesPending++
             }
         }
     }
@@ -161,11 +179,29 @@ export class TmuxGateway {
     }
 
     /**
-     * Process a line from tmux control mode
+     * Feed raw PTY data.  Buffers incomplete lines across calls so that TCP
+     * fragment boundaries never split a protocol line.
+     */
+    executeData(data: Buffer): void {
+        this.lineBuffer += data.toString('utf-8')
+
+        let newlineIdx: number
+        while ((newlineIdx = this.lineBuffer.indexOf('\n')) !== -1) {
+            const rawLine = this.lineBuffer.substring(0, newlineIdx)
+            this.lineBuffer = this.lineBuffer.substring(newlineIdx + 1)
+            const line = rawLine.replace(/\r$/, '')
+            if (line) {
+                this.executeLine(line)
+            }
+        }
+    }
+
+    /**
+     * Process a single complete line from tmux control mode
      */
     executeLine(line: string): void {
-        // Strip DCS artifacts and trailing CR
-        line = line.replace(/^\x1bP\d+p/, '').replace(/^P\d+p/, '').replace(/\x1b\\$/, '').replace(/\r$/, '')
+        // Strip DCS artifacts
+        line = line.replace(/^\x1bP\d+p/, '').replace(/^P\d+p/, '').replace(/\x1b\\$/, '')
         if (!line) return
 
         this.logger.info(`Received: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`)
@@ -250,6 +286,11 @@ export class TmuxGateway {
             if (this.acceptNotifications) {
                 this.parsePaneClose(line)
             }
+        } else if (line.startsWith('%pause') || line.startsWith('%continue')) {
+            // Flow control notifications (tmux 3.2+) — acknowledged
+            this.logger.debug(`Flow control: ${line}`)
+        } else if (line.startsWith('%no-output')) {
+            // Empty response block — no action needed
         } else if (line.startsWith('%exit')) {
             this.parseExit(line)
         } else if (line.startsWith('%')) {
@@ -262,8 +303,8 @@ export class TmuxGateway {
 
     private parseBegin(line: string): void {
         // %begin timestamp commandId flags
-        // Format: %begin 1767853190 875 0
-        // The flags field indicates: 0 = server-originated, 1 = client-originated
+        // Format: %begin 1767853190 875 1
+        // tmux Control Mode docs: flags is always 1 for client-originated.
         const parts = line.split(' ')
         if (parts.length < 3) {
             this.logger.warn(`Malformed %begin: ${line}`)
@@ -271,27 +312,25 @@ export class TmuxGateway {
         }
 
         const commandId = parts[2]
-        const flags = parts.length >= 4 ? parseInt(parts[3], 10) : 1
+        this.currentCommandId = commandId
+        this.currentResponse = []
+        this.inResponseBlock = true
 
-        if (!(flags & 1)) {
-            // Server-originated command (not in response to us)
-            this.currentCommandId = commandId
-            this.currentResponse = []
-            this.inResponseBlock = true
-        } else {
-            // Client-originated command
-            if (this.commandQueue.length === 0) {
-                // This can happen with server-initiated blocks, just track the response
-                this.currentCommandId = commandId
-                this.currentResponse = []
-                this.inResponseBlock = true
-                return
-            }
-            this.currentCommand = this.commandQueue.shift()!
-            this.currentCommandId = commandId
-            this.currentResponse = []
-            this.inResponseBlock = true
+        // If this response is for a fire-and-forget write (sendKeys),
+        // consume it without dequeuing a queued command.
+        if (this.commandQueue.length === 0 && this.directWritesPending > 0) {
+            this.directWritesPending--
+            this.currentCommand = null
+            return
         }
+
+        if (this.commandQueue.length === 0) {
+            // Server-initiated or unexpected response block
+            this.currentCommand = null
+            return
+        }
+
+        this.currentCommand = this.commandQueue.shift()!
     }
 
     private finishCurrentCommand(isError: boolean): void {

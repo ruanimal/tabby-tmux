@@ -24,6 +24,9 @@ export interface PaneState {
     keypadCursorFlag: boolean
     keypadFlag: boolean
     paneTabs: number[]
+    mouseStandardMode: boolean
+    mouseButtonMode: boolean
+    mouseAnyMode: boolean
 }
 
 /** Pre-loaded pane data from batch discovery (iTerm2-style). */
@@ -37,6 +40,14 @@ interface PaneSnapshot {
  * TmuxPaneSession - Represents a single tmux pane as a terminal session
  */
 export class TmuxPaneSession extends BaseSession {
+    /**
+     * Saved alternate screen content + cursor position, persisted after
+     * restorePaneHistory so that xterm.resize() (from setTmuxGrid after
+     * %layout-change) can re-apply it.  xterm.resize() clears the
+     * alternate screen buffer, so the content must be written again.
+     */
+    pendingAltRestore: { content: string; cursorY: number; cursorX: number; modes: string } | null = null
+
     constructor(
         logger: Logger,
         private controller: TmuxController,
@@ -83,6 +94,7 @@ export class TmuxPaneSession extends BaseSession {
     }
 
     async destroy(): Promise<void> {
+        this.pendingAltRestore = null
         await super.destroy()
         this.controller.unregisterPane(this.paneId)
     }
@@ -266,6 +278,14 @@ export class TmuxController {
      */
     handleLine(line: string): void {
         this.gateway.executeLine(line)
+    }
+
+    /**
+     * Feed raw PTY data to the gateway for byte-level DCS buffering.
+     * Preferred over handleLine for proper handling of TCP fragments.
+     */
+    handleData(data: Buffer): void {
+        this.gateway.executeData(data)
     }
 
     /**
@@ -469,17 +489,20 @@ export class TmuxController {
             'keypad_flag=#{keypad_flag}',
             'wrap_flag=#{wrap_flag}',
             'bracket_paste_flag=#{bracket_paste_flag}',
+            'mouse_standard_flag=#{mouse_standard_flag}',
+            'mouse_button_flag=#{mouse_button_flag}',
+            'mouse_any_flag=#{mouse_any_flag}',
         ].join('\t')
 
         const captures = paneIds.map(async ({ paneId }) => {
             try {
                 const [history, altHistory, stateResult] = await Promise.all([
                     this.gateway.sendCommand(
-                        `capture-pane -peqJN -S -10000 -t %${paneId}`,
+                        `capture-pane -peqJN -S- -t %${paneId}`,
                         TMUX_COMMAND_TOLERATE_ERRORS
                     ),
                     this.gateway.sendCommand(
-                        `capture-pane -peqJN -a -S -10000 -t %${paneId}`,
+                        `capture-pane -peqJN -a -S- -t %${paneId}`,
                         TMUX_COMMAND_TOLERATE_ERRORS
                     ),
                     this.gateway.sendCommand(
@@ -568,25 +591,64 @@ export class TmuxController {
         const session = this.paneSessions.get(paneId)
         if (!session) return
 
-        // 1. Primary screen history
+        const state = snapshot.state
+
+        // Step 1: Write primary screen history to the primary screen.
+        // This sets up the scrollback so it's available if the user leaves
+        // the program running on the alternate screen.
         if (snapshot.history) {
             const normalized = snapshot.history.replace(/\n/g, '\r\n')
             session.feedOutput(Buffer.from(normalized, 'utf-8'))
         }
 
-        // 2. Alternate screen history
-        //    Enter alternate screen → write history → return to primary screen.
-        //    CSI ?1047h = alternate screen buffer (with clear)
-        //    CSI ?1047l = return to primary screen
-        if (snapshot.altHistory && snapshot.altHistory.trim()) {
-            const enterAlt = '\x1b[?1047h'
-            const leaveAlt = '\x1b[?1047l'
-            const normalized = snapshot.altHistory.replace(/\n/g, '\r\n')
-            session.feedOutput(Buffer.from(enterAlt + normalized + leaveAlt, 'utf-8'))
-        }
+        // Step 2: If the pane is on the alternate screen (vim, less, etc.),
+        // switch to it and write the alternate content.  We stay on alternate.
+        if (state.alternateOn) {
+            // ?1047h enters alternate screen and clears it
+            session.feedOutput(Buffer.from('\x1b[?1047h', 'utf-8'))
 
-        // 3. Apply terminal state (cursor position, scroll region, modes)
-        this.applyPaneState(session, snapshot.state)
+            // Apply terminal state on the alternate screen (scroll region,
+            // modes, cursor visibility — NOT the cursor position yet).
+            this.applyPaneState(session, state)
+
+            // Write the alternate screen content at the top-left corner.
+            // capture-pane with -a gives us exactly what was on the alternate
+            // screen, starting from row 0.
+            if (snapshot.altHistory && snapshot.altHistory.trim()) {
+                session.feedOutput(Buffer.from('\x1b[H', 'utf-8'))
+                const normalized = snapshot.altHistory.replace(/\n/g, '\r\n')
+                session.feedOutput(Buffer.from(normalized, 'utf-8'))
+            }
+
+            // Re-apply cursor position after content write (content may
+            // have moved the cursor via embedded CUP sequences).
+            const csi = (s: string) => `\x1b[${s}`
+            session.feedOutput(Buffer.from(
+                csi(`${state.cursorY + 1};${state.cursorX + 1}H`),
+                'utf-8'
+            ))
+
+            // Save alternate screen data for re-apply after xterm.resize()
+            // (called by setTmuxGrid).  xterm.resize() clears the alternate
+            // screen buffer, so the content must be written again.
+            session.pendingAltRestore = {
+                content: snapshot.altHistory || '',
+                cursorY: state.cursorY,
+                cursorX: state.cursorX,
+                modes: this.buildModeSequences(state),
+            }
+        } else {
+            // Normal mode — write alternate history if present (rare)
+            if (snapshot.altHistory && snapshot.altHistory.trim()) {
+                session.feedOutput(Buffer.from('\x1b[?1047h', 'utf-8'))
+                const normalized = snapshot.altHistory.replace(/\n/g, '\r\n')
+                session.feedOutput(Buffer.from(normalized, 'utf-8'))
+                session.feedOutput(Buffer.from('\x1b[?1047l', 'utf-8'))
+            }
+
+            // Apply terminal state (cursor, scroll region, modes)
+            this.applyPaneState(session, state)
+        }
     }
 
     /**
@@ -604,12 +666,34 @@ export class TmuxController {
             insertFlag: false, bracketPasteFlag: false,
             keypadCursorFlag: false, keypadFlag: false,
             paneTabs: [],
+            mouseStandardMode: false,
+            mouseButtonMode: false,
+            mouseAnyMode: false,
         }
 
-        const line = response.split(/[\r\n]+/).find(l => l.includes(`pane_id=`))
-        if (!line) return state
+        // `list-panes -t %paneId -F ...` may return multiple lines (one per pane
+        // in the window) or a single tab-separated line.  We must find the
+        // segment whose pane_id matches expectedPaneId — the first match is NOT
+        // necessarily the one we asked for.
+        const lines = response.split(/[\r\n]+/)
+        let targetLine = ''
+        for (const line of lines) {
+            if (!line.includes('pane_id=')) continue
+            // Check if this line's pane_id matches our expected pane
+            const idMatch = line.match(/pane_id=%?(\d+)/)
+            if (idMatch && parseInt(idMatch[1]) === expectedPaneId) {
+                targetLine = line
+                break
+            }
+        }
+        // Fallback: if no exact match found, use the first line with pane_id
+        // (happens when list-panes returns only the target pane)
+        if (!targetLine) {
+            targetLine = lines.find(l => l.includes('pane_id=')) || ''
+        }
+        if (!targetLine) return state
 
-        for (const part of line.split('\t')) {
+        for (const part of targetLine.split('\t')) {
             const eqIdx = part.indexOf('=')
             if (eqIdx < 0) continue
             const key = part.substring(0, eqIdx)
@@ -631,6 +715,9 @@ export class TmuxController {
                 case 'keypad_flag': state.keypadFlag = n === 1; break
                 case 'wrap_flag': state.wrapFlag = n === 1; break
                 case 'bracket_paste_flag': state.bracketPasteFlag = n === 1; break
+                case 'mouse_standard_flag': state.mouseStandardMode = n === 1; break
+                case 'mouse_button_flag': state.mouseButtonMode = n === 1; break
+                case 'mouse_any_flag': state.mouseAnyMode = n === 1; break
             }
         }
         return state
@@ -642,17 +729,18 @@ export class TmuxController {
      */
     private applyPaneState(session: TmuxPaneSession, state: PaneState): void {
         // Build a sequence of escape codes to restore terminal state.
-        // Mirrors iTerm2 VT100ScreenMutableState.setTmuxState:.
+        const seq = this.buildModeSequences(state)
+        session.feedOutput(Buffer.from(seq, 'utf-8'))
+    }
+
+    /**
+     * Build ANSI escape sequences for terminal mode state (without alternate
+     * screen entry).  Used by both applyPaneState and pendingAltRestore.
+     */
+    private buildModeSequences(state: PaneState): string {
         const csi = (s: string) => `\x1b[${s}`
         const esc = (s: string) => `\x1b${s}`
         let seq = ''
-
-        // Enter alternate screen if the pane was on it
-        if (state.alternateOn) {
-            seq += csi('?1047h')
-            // Restore saved cursor position for primary screen
-            seq += csi(`${state.alternateSavedY + 1};${state.alternateSavedX + 1}H`)
-        }
 
         // Set scroll region (DECSTBM)
         if (state.scrollRegionUpper > 0 || state.scrollRegionLower > 0) {
@@ -680,6 +768,11 @@ export class TmuxController {
         // Wrap mode (DECAWM)
         seq += state.wrapFlag ? csi('?7h') : csi('?7l')
 
+        // Mouse tracking modes (?1000=normal, ?1002=button, ?1003=any)
+        seq += state.mouseStandardMode ? csi('?1000h') : csi('?1000l')
+        seq += state.mouseButtonMode ? csi('?1002h') : csi('?1002l')
+        seq += state.mouseAnyMode ? csi('?1003h') : csi('?1003l')
+
         // Tab stops (HTS / TBC)
         // TBC 3 = clear all tab stops, then HTS at each position
         seq += csi('3g')
@@ -691,7 +784,40 @@ export class TmuxController {
         // Reset cursor back to final position (tab stop setup moves it)
         seq += csi(`${state.cursorY + 1};${state.cursorX + 1}H`)
 
-        session.feedOutput(Buffer.from(seq, 'utf-8'))
+        return seq
+    }
+
+    /**
+     * Re-apply alternate screen content after xterm.resize() clears it.
+     * Called by TmuxPaneTabComponent.applyTmuxGrid() after resize.
+     */
+    reapplyAltContent(session: TmuxPaneSession): void {
+        const alt = session.pendingAltRestore
+        if (!alt) return
+
+        // Clear immediately — this is a one-shot re-apply after the initial
+        // resize.  After this, live tmux output maintains the alternate screen.
+        session.pendingAltRestore = null
+
+        // Enter alternate screen (clears it)
+        session.feedOutput(Buffer.from('\x1b[?1047h', 'utf-8'))
+
+        // Apply modes
+        session.feedOutput(Buffer.from(alt.modes, 'utf-8'))
+
+        // Write content at top-left
+        if (alt.content && alt.content.trim()) {
+            session.feedOutput(Buffer.from('\x1b[H', 'utf-8'))
+            const normalized = alt.content.replace(/\n/g, '\r\n')
+            session.feedOutput(Buffer.from(normalized, 'utf-8'))
+        }
+
+        // Re-apply cursor position
+        const csi = (s: string) => `\x1b[${s}`
+        session.feedOutput(Buffer.from(
+            csi(`${alt.cursorY + 1};${alt.cursorX + 1}H`),
+            'utf-8'
+        ))
     }
 
     async killPane(paneId: number): Promise<void> {

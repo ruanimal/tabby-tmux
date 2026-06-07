@@ -131,6 +131,13 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         } catch (e) {
             this.logger.warn(`Failed to resize pane %${this.paneId} grid`, e)
         }
+
+        // xterm.resize() clears the alternate screen buffer.
+        // Re-apply saved alternate content if this pane was on it.
+        const session = this.session as any
+        if (session?.pendingAltRestore && this.controller) {
+            this.controller.reapplyAltContent(session)
+        }
     }
 
     async initializeSession(): Promise<void> {
