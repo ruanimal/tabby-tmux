@@ -145,6 +145,7 @@ export class TmuxController {
     private sessionName = ''
     private sessionId = -1
     private attached = false
+    private activeWindowId: number | null = null
 
     public gateway: TmuxGateway
     public events = new Subject<{ type: string; paneId?: number; windowId?: number; data?: any }>()
@@ -260,6 +261,13 @@ export class TmuxController {
         })
 
         // Handle exit
+        // Handle session-window-changed — the current window changed
+        this.gateway.sessionWindowChanged$.subscribe(({ windowId }) => {
+            this.logger.info(`Active window changed to @${windowId}`)
+            this.activeWindowId = windowId
+            this.events.next({ type: 'active-window-changed', windowId })
+        })
+
         this.gateway.exit$.subscribe(reason => {
             this.attached = false
             this.events.next({ type: 'exit', data: { reason } })
@@ -304,21 +312,25 @@ export class TmuxController {
     private async discoverWindowsAndPanes(): Promise<void> {
         this.logger.info('Batch discovering windows and panes...')
         try {
-            // Step 1: Discover all windows with names and layout
+            // Step 1: Discover all windows with names, layout and active flag
             const winResult = await this.gateway.sendCommand(
-                'list-windows -F "#{window_id} #{window_name} #{window_layout}"',
+                'list-windows -F "#{window_id} #{window_name} #{window_active} #{window_layout}"',
                 TMUX_COMMAND_TOLERATE_ERRORS
             )
             const winLines = winResult.split(/[\r\n]+/).map(l => l.trim()).filter(l => l)
             this.logger.info(`Found ${winLines.length} window(s) from list-windows`)
 
             for (const line of winLines) {
-                // Format: "@0 mywindow 1234,0x0,0,0{60x24,0,0,1}"
-                const match = line.match(/^@?(\d+)\s+(.+?)\s+(.+)$/)
+                // Format: "@0 mywindow 1 1234,0x0,0,0{60x24,0,0,1}"
+                const match = line.match(/^@?(\d+)\s+(.+?)\s+([01])\s+(.+)$/)
                 if (match) {
                     const windowId = parseInt(match[1])
                     const windowName = match[2]
-                    const layout = match[3]
+                    const active = match[3] === '1'
+                    const layout = match[4]
+                    if (active) {
+                        this.activeWindowId = windowId
+                    }
                     if (!this.windowStates.has(windowId)) {
                         this.windowStates.set(windowId, {
                             id: windowId,
@@ -910,6 +922,14 @@ export class TmuxController {
     getFirstWindowId(): number | undefined {
         const first = this.windowStates.keys().next()
         return first.done ? undefined : first.value
+    }
+
+    /**
+     * Get the tmux-side active window ID, as reported by list-windows
+     * #{window_active} or %session-window-changed. Falls back to null.
+     */
+    getActiveWindowId(): number | null {
+        return this.activeWindowId
     }
 
     /**

@@ -218,9 +218,14 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             // to be processed before switching to the first window.
             await this.eventQueue
 
-            const firstWindowId = this.controller!.getFirstWindowId()
-            if (firstWindowId !== undefined) {
-                await this.switchToWindow(firstWindowId)
+            // Prefer the tmux-side active window (from list-windows #{window_active}
+            // or %session-window-changed). Fall back to the first window in the map.
+            const activeWindowId = this.controller!.getActiveWindowId()
+            const targetWindowId = (activeWindowId !== null && this.windowPaneTabs.has(activeWindowId))
+                ? activeWindowId
+                : this.controller!.getFirstWindowId()
+            if (targetWindowId !== undefined) {
+                await this.switchToWindow(targetWindowId)
             }
 
             // Listen for window resize events (like iTerm2's windowDidResize).
