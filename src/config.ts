@@ -8,6 +8,7 @@ export class TmuxConfigProvider extends ConfigProvider {
             commandTimeoutMs: 30_000,
             sendKeysChunkSize: 200,
             resizeDebounceMs: 150,
+            debugLogging: false,
         },
     }
 }

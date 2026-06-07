@@ -1,6 +1,7 @@
 import { Subject } from 'rxjs'
 import { BaseSession } from 'tabby-terminal'
 import { Logger, ConfigService } from 'tabby-core'
+import { createConditionalLogger, ConditionalLogger } from './logHelper'
 import { Injector } from '@angular/core'
 import { TmuxGateway, TMUX_COMMAND_TOLERATE_ERRORS } from './gateway'
 
@@ -242,12 +243,16 @@ export class TmuxController {
     public gateway: TmuxGateway
     public events = new Subject<{ type: string; paneId?: number; windowId?: number; data?: any }>()
 
+    private get log (): ConditionalLogger {
+        return createConditionalLogger(this.logger, this.configService)
+    }
+
     constructor(
         private logger: Logger,
         _injector: Injector,  // eslint-disable-line @typescript-eslint/no-unused-vars
         writer: (data: string) => void,
         private closer: () => void,
-        configService?: ConfigService
+        private configService?: ConfigService
     ) {
         this.gateway = new TmuxGateway(logger, writer, configService)
         this.setupGatewaySubscriptions()
@@ -256,7 +261,7 @@ export class TmuxController {
     private setupGatewaySubscriptions(): void {
         // Handle pane output
         this.gateway.output$.subscribe(({ paneId, data }) => {
-            this.logger.info(`Session received output for pane %${paneId}: ${data.length} bytes`)
+            this.log.info(`Session received output for pane %${paneId}: ${data.length} bytes`)
 
             if (this.paneSessions.has(paneId)) {
                 this.paneSessions.get(paneId)!.feedOutput(data)
@@ -276,7 +281,7 @@ export class TmuxController {
             this.sessionName = sessionName
             this.sessionId = sessionId
             this.attached = true
-            this.logger.info(`Attached to session: ${sessionName} ($${sessionId})`)
+            this.log.info(`Attached to session: ${sessionName} ($${sessionId})`)
             this.events.next({ type: 'session-changed', data: { sessionName, sessionId } })
             // Immediate batch discovery — no setTimeout delay
             this.discoverWindowsAndPanes()
@@ -316,7 +321,7 @@ export class TmuxController {
 
         // Handle pane close events (tmux 3.2+)
         this.gateway.paneClose$.subscribe(({ windowId, paneId }) => {
-            this.logger.info(`Pane %${paneId} closed in window @${windowId}`)
+            this.log.info(`Pane %${paneId} closed in window @${windowId}`)
             // Remove from known panes
             this.knownPanes.delete(paneId)
             // Remove from window state
@@ -356,7 +361,7 @@ export class TmuxController {
         // Handle exit
         // Handle session-window-changed — the current window changed
         this.gateway.sessionWindowChanged$.subscribe(({ windowId }) => {
-            this.logger.info(`Active window changed to @${windowId}`)
+            this.log.info(`Active window changed to @${windowId}`)
             this.activeWindowId = windowId
             this.events.next({ type: 'active-window-changed', windowId })
         })
@@ -403,7 +408,7 @@ export class TmuxController {
      * is needed at the session level.
      */
     private async discoverWindowsAndPanes(): Promise<void> {
-        this.logger.info('Batch discovering windows and panes...')
+        this.log.info('Batch discovering windows and panes...')
         try {
             // Step 1: Discover all windows with names, layout and active flag
             const winResult = await this.gateway.sendCommand(
@@ -411,7 +416,7 @@ export class TmuxController {
                 TMUX_COMMAND_TOLERATE_ERRORS
             )
             const winLines = winResult.split(/[\r\n]+/).map(l => l.trim()).filter(l => l)
-            this.logger.info(`Found ${winLines.length} window(s) from list-windows`)
+            this.log.info(`Found ${winLines.length} window(s) from list-windows`)
 
             for (const line of winLines) {
                 // Format: "@0 mywindow 1 1234,0x0,0,0{60x24,0,0,1}"
@@ -446,7 +451,7 @@ export class TmuxController {
                 TMUX_COMMAND_TOLERATE_ERRORS
             )
             const paneLines = paneResult.split(/[\r\n]+/).map(l => l.trim()).filter(l => l)
-            this.logger.info(`Found ${paneLines.length} pane(s) from list-panes`)
+            this.log.info(`Found ${paneLines.length} pane(s) from list-panes`)
 
             const newPaneIds: Array<{ paneId: number; windowId: number }> = []
             for (const line of paneLines) {
@@ -477,13 +482,13 @@ export class TmuxController {
             // Step 3: Batch-capture history + state for all new panes
             // (mirrors iTerm2 TmuxWindowOpener)
             if (newPaneIds.length > 0) {
-                this.logger.info(`Capturing history/state for ${newPaneIds.length} new pane(s)...`)
+                this.log.info(`Capturing history/state for ${newPaneIds.length} new pane(s)...`)
                 await this.capturePaneSnapshots(newPaneIds)
             }
 
             // Step 4: Emit pane-add events — history is now pre-loaded
             for (const { paneId, windowId } of newPaneIds) {
-                this.logger.info(`Discovered pane %${paneId} in window @${windowId}`)
+                this.log.info(`Discovered pane %${paneId} in window @${windowId}`)
                 this.events.next({ type: 'pane-add', paneId, windowId })
             }
 
@@ -555,7 +560,7 @@ export class TmuxController {
         }
 
         if (newPaneIds.length > 0) {
-            this.logger.info(`Discovered ${newPaneIds.length} new pane(s) from layout-change for window @${windowId}`)
+            this.log.info(`Discovered ${newPaneIds.length} new pane(s) from layout-change for window @${windowId}`)
 
             // Capture history + state for new panes (same as discoverWindowsAndPanes Step 3)
             await this.capturePaneSnapshots(newPaneIds)
@@ -667,7 +672,7 @@ export class TmuxController {
     }
 
     writeToPane(paneId: number, data: Buffer): void {
-        this.logger.info(`Writing ${data.length} bytes to pane %${paneId}: <${data.toString('hex')}>`)
+        this.log.info(`Writing ${data.length} bytes to pane %${paneId}: <${data.toString('hex')}>`)
         this.gateway.sendKeys(data, paneId)
     }
 

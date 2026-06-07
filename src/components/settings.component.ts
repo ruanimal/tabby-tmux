@@ -31,6 +31,12 @@ import { ConfigService } from 'tabby-core'
                         [(ngModel)]="config.store.tmuxPlugin.resizeDebounceMs"
                         (ngModelChange)="config.save()">
                 </div>
+                <div class="row">
+                    <div class="header"><div class="title">Debug logging:</div></div>
+                    <input type="checkbox"
+                        [(ngModel)]="config.store.tmuxPlugin.debugLogging"
+                        (ngModelChange)="config.save()">
+                </div>
             </div>
         </div>
     `,

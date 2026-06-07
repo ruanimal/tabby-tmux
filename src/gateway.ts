@@ -1,5 +1,6 @@
 import { Subject } from 'rxjs'
 import { Logger, ConfigService } from 'tabby-core'
+import { createConditionalLogger, ConditionalLogger } from './logHelper'
 
 // Command flags
 export const TMUX_COMMAND_TOLERATE_ERRORS = 1 << 0
@@ -77,6 +78,10 @@ export class TmuxGateway {
         private configService?: ConfigService
     ) { }
 
+    private get log (): ConditionalLogger {
+        return createConditionalLogger(this.logger, this.configService)
+    }
+
     private get commandTimeoutMs (): number {
         return this.configService?.store.tmuxPlugin?.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
     }
@@ -104,7 +109,7 @@ export class TmuxGateway {
             }
             this.commandQueue.push(cmd)
             this.write(command + '\r')
-            this.logger.debug(`Sent command: ${command}`)
+            this.log.debug(`Sent command: ${command}`)
         })
 
         // Race against timeout — if tmux never responds, reject instead of hanging
@@ -149,7 +154,7 @@ export class TmuxGateway {
         }).join('; ')
 
         this.write(combined + '\r')
-        this.logger.debug(`Sent command list: ${combined}`)
+        this.log.debug(`Sent command list: ${combined}`)
 
         return Promise.all(promises)
     }
@@ -214,7 +219,7 @@ export class TmuxGateway {
         line = line.replace(/^\x1bP\d+p/, '').replace(/^P\d+p/, '').replace(/\x1b\\$/, '')
         if (!line) return
 
-        this.logger.info(`Received: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`)
+        this.log.info(`Received: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`)
 
         // Handle response blocks
         if (this.inResponseBlock) {
@@ -257,10 +262,10 @@ export class TmuxGateway {
             this.parseBegin(line)
         } else if (line.startsWith('%output ')) {
             if (this.acceptNotifications) {
-                this.logger.info(`Parsing output line: ${line.substring(0, 50)}...`)
+                this.log.info(`Parsing output line: ${line.substring(0, 50)}...`)
                 this.parseOutput(line)
             } else {
-                this.logger.warn(`Ignored output (not accepting notifications): ${line.substring(0, 50)}...`)
+                this.log.warn(`Ignored output (not accepting notifications): ${line.substring(0, 50)}...`)
             }
         } else if (line.startsWith('%extended-output ')) {
             if (this.acceptNotifications) {
@@ -302,14 +307,14 @@ export class TmuxGateway {
             }
         } else if (line.startsWith('%pause') || line.startsWith('%continue')) {
             // Flow control notifications (tmux 3.2+) — acknowledged
-            this.logger.debug(`Flow control: ${line}`)
+            this.log.debug(`Flow control: ${line}`)
         } else if (line.startsWith('%no-output')) {
             // Empty response block — no action needed
         } else if (line.startsWith('%exit')) {
             this.parseExit(line)
         } else if (line.startsWith('%')) {
             // Unknown notification, ignore
-            this.logger.debug(`Unknown notification: ${line}`)
+            this.log.debug(`Unknown notification: ${line}`)
         }
     }
 
@@ -387,7 +392,7 @@ export class TmuxGateway {
 
         const paneId = parseInt(match[1])
         const data = this.decodeOutput(match[2])
-        this.logger.info(`Parsed output for pane %${paneId}: ${data.length} bytes (match_len=${match[2].length})`)
+        this.log.info(`Parsed output for pane %${paneId}: ${data.length} bytes (match_len=${match[2].length})`)
         this.output$.next({ paneId, data })
     }
 

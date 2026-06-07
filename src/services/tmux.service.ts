@@ -1,5 +1,6 @@
 import { Injectable, Injector } from '@angular/core'
 import { AppService, LogService, Logger, ConfigService } from 'tabby-core'
+import { createConditionalLogger, ConditionalLogger } from '../logHelper'
 import { BaseTerminalTabComponent, SessionMiddleware } from 'tabby-terminal'
 import { Subject, Subscription } from 'rxjs'
 import { TmuxController } from '../session'
@@ -71,6 +72,10 @@ export class TmuxService {
         this.logger = log.create('tmux-service')
     }
 
+    private get log (): ConditionalLogger {
+        return createConditionalLogger(this.logger, this.configService)
+    }
+
     get isConnected(): boolean {
         return this.sessions.size > 0
     }
@@ -101,7 +106,7 @@ export class TmuxService {
     private replaceWithSessionTab(context: SessionContext): void {
         if (context.sessionTab) return
 
-        this.logger.info('Creating TmuxSessionTab...')
+        this.log.info('Creating TmuxSessionTab...')
 
         // Find the topmost parent tab (the actual tab listed in the top tab bar)
         const topmostTab = context.terminalTab.topmostParent || context.terminalTab
@@ -194,7 +199,7 @@ export class TmuxService {
             ;(this.appService as any).selectTab(context.topmostTab)
         }
 
-        this.logger.info('Disconnected tmux context')
+        this.log.info('Disconnected tmux context')
     }
 
     /**
@@ -218,7 +223,7 @@ export class TmuxService {
             return
         }
 
-        this.logger.info('Attaching tmux to existing terminal session')
+        this.log.info('Attaching tmux to existing terminal session')
 
         const context: SessionContext = {
             controller: null!, // Set below
@@ -252,7 +257,7 @@ export class TmuxService {
 
         // Handle terminal tab closure (disconnect on close)
         context.subscriptions.push(terminalTab.destroyed$.subscribe(() => {
-            this.logger.info('Attached terminal tab closed, disconnecting session')
+            this.log.info('Attached terminal tab closed, disconnecting session')
             this.disconnectContext(context)
         }))
 
