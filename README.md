@@ -46,6 +46,19 @@ pnpm run watch  # watch mode
 TABBY_PLUGINS=$(pwd) tabby --debug
 ```
 
+## trzsz Support
+
+This plugin is fully compatible with the [tabby-trzsz](https://github.com/trzsz/tabby-trzsz) plugin, enabling file transfer (`trz`/`tsz`) and drag-and-drop upload over tmux panes.
+
+Install both plugins and they work together automatically:
+
+```bash
+cd <tabby-plugins-dir>
+npm install tabby-tmux tabby-trzsz
+```
+
+> **Note:** When uploading files over WebSocket terminals (e.g. via [tabby-ws-term](https://github.com/ruanimal/tabby-ws-term)), use `trzsz -B 10K` to improve compatibility.
+
 ## Architecture
 
 ```

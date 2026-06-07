@@ -46,6 +46,19 @@ pnpm run watch  # watch mode
 TABBY_PLUGINS=$(pwd) tabby --debug
 ```
 
+## trzsz 支持
+
+本插件与 [tabby-trzsz](https://github.com/trzsz/tabby-trzsz) 插件完全兼容，可在 tmux pane 中使用文件传输（`trz`/`tsz`）和拖拽上传。
+
+同时安装两个插件即可自动配合工作：
+
+```bash
+cd <tabby-plugins-dir>
+npm install tabby-tmux tabby-trzsz
+```
+
+> **提示：** 通过 WebSocket 终端上传文件时（如使用 [tabby-ws-term](https://github.com/ruanimal/tabby-ws-term)），建议使用 `trzsz -B 10K` 以提高兼容性。
+
 ## Architecture
 
 ```
