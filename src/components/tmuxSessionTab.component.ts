@@ -1,6 +1,6 @@
 import { Component, Injector, Input, OnInit, OnDestroy, ChangeDetectorRef, ElementRef } from '@angular/core'
 import { Subscription } from 'rxjs'
-import { SplitTabComponent, SplitContainer, LogService, Logger, TabsService, HotkeysService } from 'tabby-core'
+import { SplitTabComponent, SplitContainer, LogService, Logger, TabsService, HotkeysService, GetRecoveryTokenOptions, RecoveryToken } from 'tabby-core'
 import { TabRecoveryService } from 'tabby-core'
 import { TmuxController } from '../session'
 import { TmuxService } from '../services/tmux.service'
@@ -1221,5 +1221,22 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
     override async canClose(): Promise<boolean> {
         return true
+    }
+
+    /**
+     * Override recovery to delegate to the hidden host tab.
+     *
+     * When Tabby saves tabs on exit, the original terminal tab (topmostTab)
+     * is hidden from app.tabs and would be lost. Instead of persisting the
+     * tmux session tab (which cannot be meaningfully restored), we return
+     * the host tab's recovery token so Tabby restores the pre-tmux terminal.
+     * The tmux session remains alive in the background and can be re-attached.
+     */
+    override async getRecoveryToken (options?: GetRecoveryTokenOptions): Promise<RecoveryToken|null> {
+        const ctx = this.tmuxService.findContextForTab(this)
+        if (ctx?.topmostTab) {
+            return ctx.topmostTab.getRecoveryToken(options)
+        }
+        return null
     }
 }
