@@ -55,6 +55,8 @@ export interface TmuxSessionProfile {
             flex: 1 1 0;
             position: relative;
             min-height: 0;
+            padding: 4px;
+            box-sizing: border-box;
         }
         /* Pane containers: pixel-absolute positioned by applyPixelLayout().
            No border, no padding — the xterm canvas fills the entire box. */
@@ -762,6 +764,13 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         const paneMap = this.windowPaneTabs.get(this.activeWindowId!)
         if (!paneMap) return
 
+        // Read pane-area padding so absolute-positioned panes respect it.
+        // CSS absolute positioning ignores parent padding, so we offset manually.
+        const host = this.hostElement.nativeElement as HTMLElement
+        const paneArea = host.querySelector('.pane-area') as HTMLElement
+        const padL = paneArea ? parseFloat(getComputedStyle(paneArea).paddingLeft) || 0 : 0
+        const padT = paneArea ? parseFloat(getComputedStyle(paneArea).paddingTop) || 0 : 0
+
         for (const pane of flattenLayout(layoutTree)) {
             const paneTab = paneMap.get(pane.paneId) as any
             if (!paneTab) continue
@@ -771,8 +780,8 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             if (viewRef) {
                 const el = viewRef.rootNodes[0] as HTMLElement
                 el.classList.add('child')
-                el.style.left   = `${pane.x * cell.width}px`
-                el.style.top    = `${pane.y * cell.height}px`
+                el.style.left   = `${padL + pane.x * cell.width}px`
+                el.style.top    = `${padT + pane.y * cell.height}px`
                 el.style.width  = `${pane.width * cell.width}px`
                 el.style.height = `${pane.height * cell.height}px`
             }
@@ -832,22 +841,23 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     /**
      * Measure the whole-window character grid from the .pane-area container.
      *
-     * Pure pixel-to-cell conversion. No padding, no scrollbar, no divider
-     * compensation — pane containers are exactly cols×cell pixels, scrollbar
-     * is overlay, dividers are 1px overlay elements.
+     * Pure pixel-to-cell conversion. Uses clientWidth/clientHeight to
+     * exclude padding from the measurement — pane-area padding is purely
+     * cosmetic and must not affect the tmux grid calculation.
      */
     private measureClientSize(): { cols: number; rows: number } | null {
         const host = this.hostElement.nativeElement as HTMLElement
         const paneArea = host.querySelector('.pane-area') ?? host
-        const rect = paneArea.getBoundingClientRect()
-        if (rect.width < 10 || rect.height < 10) return null
+        const pw = (paneArea as HTMLElement).clientWidth
+        const ph = (paneArea as HTMLElement).clientHeight
+        if (pw < 10 || ph < 10) return null
 
         const cell = this.getCellSize()
         if (!cell) return null
 
         return {
-            cols: Math.max(2, Math.floor(rect.width / cell.width)),
-            rows: Math.max(1, Math.floor(rect.height / cell.height)),
+            cols: Math.max(2, Math.floor(pw / cell.width)),
+            rows: Math.max(1, Math.floor(ph / cell.height)),
         }
     }
 
@@ -918,6 +928,11 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             return
         }
 
+        // Read pane-area padding to offset divider positions (same as applyPixelLayout)
+        const cs = getComputedStyle(paneArea)
+        const padL = parseFloat(cs.paddingLeft) || 0
+        const padT = parseFloat(cs.paddingTop) || 0
+
         for (let i = 0; i < node.children.length - 1; i++) {
             const left = node.children[i]
             const right = node.children[i + 1]
@@ -925,8 +940,8 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             if (node.type === 'horizontal') {
                 // Children are side-by-side → vertical divider between left and right
                 // Divider is 1 cell wide, centered at the shared boundary
-                const x = (left.x + left.width) * cell.width
-                const top = node.y * cell.height
+                const x = padL + (left.x + left.width) * cell.width
+                const top = padT + node.y * cell.height
                 const height = node.height * cell.height
 
                 // Find the rightmost pane(s) in `left` and leftmost pane(s) in `right`
@@ -937,8 +952,8 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             } else {
                 // Children are stacked top-to-bottom → horizontal divider between top and bottom
                 // Divider is 1 cell tall, centered at the shared boundary
-                const y = (left.y + left.height) * cell.height
-                const leftPx = node.x * cell.width
+                const y = padT + (left.y + left.height) * cell.height
+                const leftPx = padL + node.x * cell.width
                 const width = node.width * cell.width
 
                 // Find the bottommost pane(s) in `left` and topmost pane(s) in `right`
