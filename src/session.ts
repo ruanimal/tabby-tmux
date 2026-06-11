@@ -366,6 +366,13 @@ export class TmuxController {
             this.events.next({ type: 'active-window-changed', windowId })
         })
 
+        // Handle pane focus changes (e.g. after pane close, tmux auto-focuses
+        // the next pane and sends %window-pane-changed).
+        this.gateway.paneChanged$.subscribe(({ windowId, paneId }) => {
+            this.log.info(`Active pane changed to %${paneId} in window @${windowId}`)
+            this.events.next({ type: 'active-pane-changed', paneId, windowId })
+        })
+
         this.gateway.exit$.subscribe(reason => {
             this.attached = false
             this.events.next({ type: 'exit', data: { reason } })

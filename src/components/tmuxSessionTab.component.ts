@@ -343,6 +343,12 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 }
                 break
 
+            case 'active-pane-changed':
+                if (event.paneId !== undefined && event.windowId !== undefined) {
+                    this.handleActivePaneChanged(event.paneId, event.windowId)
+                }
+                break
+
             case 'layout-change':
                 // NOTE: We always call syncLayout for the active window.
                 // For non-active windows, we save the layout but don't rebuild
@@ -639,6 +645,12 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
     /**
      * Handle a tmux window being closed.
+     *
+     * tmux automatically activates an adjacent window (next by index, or
+     * previous if it was the last) and sends %session-window-changed.
+     * The controller updates activeWindowId from that event, so we check
+     * it to decide which window to switch to — matching tmux default
+     * behavior (and browser tab close behavior).
      */
     private async handleWindowClose(windowId: number): Promise<void> {
         const paneMap = this.windowPaneTabs.get(windowId)
@@ -659,7 +671,13 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             this.activeWindowId = null
             const remainingWindows = Array.from(this.windowPaneTabs.keys())
             if (remainingWindows.length > 0) {
-                await this.switchToWindow(remainingWindows[0])
+                // tmux sends %session-window-changed which updates
+                // controller.activeWindowId — prefer that over arbitrary choice
+                const tmuxActiveId = this.controller?.getActiveWindowId()
+                const target = (tmuxActiveId !== null && this.windowPaneTabs.has(tmuxActiveId))
+                    ? tmuxActiveId
+                    : remainingWindows[0]
+                await this.switchToWindow(target)
             } else {
                 // No windows left — clear dividers
                 this.clearDividers()
@@ -741,6 +759,10 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
     /**
      * Handle a pane being closed (from %pane-close event or manual cleanup).
+     *
+     * Note: we do NOT activate a neighboring pane here. tmux sends
+     * %window-pane-changed after closing a pane, which triggers
+     * handleActivePaneChanged() to focus the correct pane.
      */
     private handlePaneClose(paneId: number, windowId: number): void {
         const paneMap = this.windowPaneTabs.get(windowId)
@@ -758,6 +780,23 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             this.cdr.detectChanges()
         }
         ;(paneTab as any).destroy()
+    }
+
+    /**
+     * Handle tmux telling us the active pane changed (e.g. after pane close).
+     * Focuses the pane in the UI, matching tmux default behavior.
+     */
+    private handleActivePaneChanged(paneId: number, windowId: number): void {
+        if (windowId !== this.activeWindowId) return
+
+        const paneMap = this.windowPaneTabs.get(windowId)
+        if (!paneMap) return
+
+        const paneTab = paneMap.get(paneId)
+        if (!paneTab) return
+
+        this.logger.info(`Activating pane %${paneId} in window @${windowId}`)
+        this.focus(paneTab as any)
     }
 
     /**
