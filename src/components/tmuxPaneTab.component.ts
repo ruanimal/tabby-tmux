@@ -85,7 +85,7 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         // xterm's automatic fit-to-container so the pane never overrides the
         // tmux-dictated grid with its own (pixel-rounded) size — that mismatch
         // is what causes off-by-one wrapping / cursor errors. The grid is set
-        // explicitly via setTmuxGrid() from the layout sync instead.
+        // explicitly via setTmuxGrid() from applyPixelLayout() instead.
         this.frontendReady$.pipe(first()).subscribe(() => {
             this._frontendReady = true
             const frontend = this.frontend as any
@@ -100,8 +100,16 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
                 }
             }
             // Apply any grid size that arrived before the frontend was ready.
+            //
+            // IMPORTANT: Defer with setTimeout(0) to avoid re-entrant xterm.resize().
+            // frontendReady$ fires inside the onResize callback of fitAddon.fit()'s
+            // xterm.resize(N, M). Calling xterm.resize(tmuxCols, tmuxRows) from
+            // within that callback is re-entrant — the outer resize continues its
+            // internal bookkeeping after onResize returns and overwrites our changes.
+            // Deferring ensures applyTmuxGrid() runs after fitAddon.fit() and the
+            // outer resize have fully completed.
             if (this._tmuxCols > 0 && this._tmuxRows > 0) {
-                this.applyTmuxGrid()
+                setTimeout(() => this.applyTmuxGrid(), 0)
             }
         })
     }

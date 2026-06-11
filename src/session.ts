@@ -637,7 +637,16 @@ export class TmuxController {
         this.paneSessions.set(paneId, session)
         this.knownPanes.add(paneId)
 
-        // Flush any buffered output that arrived before registration
+        // If a snapshot exists, the pending output is redundant — the snapshot
+        // already contains the same content (and more). Discard it to avoid
+        // writing the prompt/scrollback twice (once from buffered %output,
+        // once from capture-pane history in restorePaneHistory).
+        if (this.pendingSnapshots.has(paneId)) {
+            this.pendingPaneOutput.delete(paneId)
+            return
+        }
+
+        // No snapshot (shouldn't happen normally) — flush buffered output
         const buffered = this.pendingPaneOutput.get(paneId)
         if (buffered) {
             for (const data of buffered) {

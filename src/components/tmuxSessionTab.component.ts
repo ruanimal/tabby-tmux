@@ -7,17 +7,6 @@ import { TmuxService } from '../services/tmux.service'
 import { TmuxPaneTabComponent } from './tmuxPaneTab.component'
 import { parseTmuxLayout, TmuxLayoutNode, flattenLayout } from '../layoutParser'
 
-/** A draggable divider derived from the tmux layout tree */
-interface TmuxDivider {
-    /** 'h' = horizontal bar (splits top/bottom), 'v' = vertical bar (splits left/right) */
-    orientation: 'h' | 'v'
-    /** Pixel position relative to .pane-area (computed from tmux cell coords) */
-    xPx: number
-    yPx: number
-    wPx: number
-    hPx: number
-}
-
 export interface TmuxSessionProfile {
     sessionName?: string
 }
@@ -28,6 +17,11 @@ export interface TmuxSessionProfile {
  * Each tmux window is represented by its pane tabs, which are hidden/shown via
  * removeTab()/addTab() when switching windows. The bottom window bar provides
  * window switching UI.
+ *
+ * Layout is pixel-absolute: pane positions are computed from tmux's character
+ * coordinates × cell pixel size, NOT from SplitTab's ratio-based percentage
+ * layout. The SplitContainer tree is only used by addTab()/removeTab() for
+ * ViewContainerRef management.
  *
  * Always created by TmuxService.attachToTerminal() with existingController set.
  */
@@ -62,57 +56,48 @@ export interface TmuxSessionProfile {
             position: relative;
             min-height: 0;
         }
-        /* SplitTab.layoutInternal() positions .child with inline left/top/width/height %.
-           border-right + border-bottom render the tmux pane separator line.
-           box-sizing: border-box keeps the border inside the layout box so
-           xterm content is not displaced.
-           The border area also serves as the resize drag handle (see onPaneAreaMouseDown). */
+        /* Pane containers: pixel-absolute positioned by applyPixelLayout().
+           No border, no padding — the xterm canvas fills the entire box. */
         ::ng-deep .pane-area > .child {
             position: absolute;
-            transition: 0.125s all;
-            opacity: .75;
             box-sizing: border-box;
-            border-right: 1px solid rgba(128,128,128,0.3);
-            border-bottom: 1px solid rgba(128,128,128,0.3);
+            opacity: .75;
+            transition: opacity 0.125s;
         }
         ::ng-deep .pane-area > .child.focused {
             opacity: 1;
         }
-        /*
-         * Transparent hit-target overlays at the right/bottom edges.
-         * xterm renders a scrollbar (~14px wide) that intercepts mouse events,
-         * preventing the pane-area mousemove handler from detecting border
-         * proximity.  These ::after pseudo-elements sit above the scrollbar
-         * (z-index: 10) and capture events for resize dragging.
-         */
-        ::ng-deep .pane-area > .child::after {
-            content: '';
+        /* Independent divider elements for pane boundaries + resize dragging.
+           Width/height is set inline to 1 cell to match tmux's 1-char separator.
+           The visible line is a 1px ::after pseudo-element centered in the hit area. */
+        ::ng-deep .tmux-divider {
             position: absolute;
-            top: 0;
-            right: 0;
-            width: 10px;
-            height: 100%;
-            z-index: 10;
-            pointer-events: auto;
+            z-index: 5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        ::ng-deep .tmux-divider::after {
+            content: '';
+            background: rgba(128,128,128,0.3);
+            transition: background 0.15s;
+        }
+        ::ng-deep .tmux-divider:hover::after {
+            background: rgba(128,128,128,0.75);
+        }
+        ::ng-deep .tmux-divider.v {   /* vertical divider: left-right split */
             cursor: col-resize;
         }
-        ::ng-deep .pane-area > .child::before {
-            content: '';
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            height: 10px;
-            z-index: 10;
-            pointer-events: auto;
+        ::ng-deep .tmux-divider.v::after {
+            width: 1px;
+            height: 100%;
+        }
+        ::ng-deep .tmux-divider.h {   /* horizontal divider: top-bottom split */
             cursor: row-resize;
         }
-        /* Highlight the border when hovering near the right/bottom edge */
-        ::ng-deep .pane-area > .child.border-hover-right {
-            border-right-color: rgba(128,128,128,0.75);
-        }
-        ::ng-deep .pane-area > .child.border-hover-bottom {
-            border-bottom-color: rgba(128,128,128,0.75);
+        ::ng-deep .tmux-divider.h::after {
+            height: 1px;
+            width: 100%;
         }
         tmux-window-bar {
             flex: 0 0 auto;
@@ -147,12 +132,8 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     private _lastSentCols = 0
     private _lastSentRows = 0
 
-    /** Custom tmux pane dividers — kept for interface compatibility but not rendered */
-    _tmuxDividers: TmuxDivider[] = []
-    /** mousedown handler attached to .pane-area for border drag detection */
-    private _paneAreaMouseDownHandler: ((e: MouseEvent) => void) | null = null
-    /** mousemove handler for border hover highlight */
-    private _paneAreaMouseMoveHandler: ((e: MouseEvent) => void) | null = null
+    /** Active divider DOM elements for the current window layout */
+    private _dividerElements: HTMLElement[] = []
 
     constructor(
         injector: Injector,
@@ -212,15 +193,19 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         // has finished inserting us into its ViewContainerRef
         requestAnimationFrame(async () => {
             this._initialized = true
-            await this.controller!.refreshPanes()
-            this.bootstrapFromControllerState()
 
-            // Wait for all queued events (window-add, pane-add) from refreshPanes
-            // to be processed before switching to the first window.
+            // ── Step A: Push client size FIRST ──
+            // tmux may start with stale client size from the previous attach.
+            // Tell tmux our actual size before discovering panes, so the
+            // layout-change events carry coordinates matching our window.
+            this.refreshClientSize()
             await this.eventQueue
 
-            // Prefer the tmux-side active window (from list-windows #{window_active}
-            // or %session-window-changed). Fall back to the first window in the map.
+            // ── Step B: Pane discovery (now based on correct size) ──
+            await this.controller!.refreshPanes()
+            this.bootstrapFromControllerState()
+            await this.eventQueue
+
             const activeWindowId = this.controller!.getActiveWindowId()
             const targetWindowId = (activeWindowId !== null && this.windowPaneTabs.has(activeWindowId))
                 ? activeWindowId
@@ -229,29 +214,16 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 await this.switchToWindow(targetWindowId)
             }
 
-            // Listen for window resize events (like iTerm2's windowDidResize).
-            // Only fires when the browser window changes size, not during
-            // internal SplitTab layout operations. Debounced to avoid flooding.
+            // ── Step C: ResizeObserver + window resize ──
             this._resizeHandler = () => this.scheduleRefreshClientSize()
             window.addEventListener('resize', this._resizeHandler)
 
-            // Observe the .pane-area container directly. This is the single
-            // source of truth for the client size: any time the container's
-            // pixel size changes (window resize, spanner drag, sidebar toggle,
-            // first mount), we recompute and push the whole-window grid to tmux.
-            // Per-pane xterm fit is disabled, so this never feeds back.
             const host = this.hostElement.nativeElement as HTMLElement
             const paneArea = host.querySelector('.pane-area')
             if (paneArea && typeof ResizeObserver !== 'undefined') {
                 this._paneAreaObserver = new ResizeObserver(() => this.scheduleRefreshClientSize())
                 this._paneAreaObserver.observe(paneArea)
             }
-
-            // Attach border hover + drag handlers to the pane-area
-            this.attachPaneAreaBorderHandlers()
-
-            // Initial size sync after pane mount
-            this.scheduleRefreshClientSize()
         })
     }
 
@@ -393,11 +365,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         this.logger.info(`Switching to window @${windowId}`)
 
         // Clear dividers while switching windows
-        this._tmuxDividers = []
+        this.clearDividers()
 
-        // 1. Detach current active window's pane views (don't use removeTab —
-        //    SplitTabComponent.removeTab destroys the tab when root.children
-        //    becomes empty). Instead, clear the root directly.
+        // 1. Detach current active window's pane views
         if (this.activeWindowId !== null) {
             const paneMap = this.windowPaneTabs.get(this.activeWindowId)
             if (paneMap) {
@@ -419,20 +389,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         const paneMap = this.windowPaneTabs.get(windowId)!
 
         if (paneMap.size === 0) {
-            // First time visiting this window. Pane tabs will be created by
-            // handlePaneAdd (triggered by discoverPanesFromLayout on
-            // %layout-change). We don't call addPanesForWindow — panes are
-            // discovered asynchronously (iTerm2-style).
-            //
-            // HOWEVER: if the controller already knows the layout for this
-            // window (from batch discovery during attach), we can proactively
-            // discover panes from it instead of waiting for a layout-change
-            // event that may never come (tmux doesn't re-send layout-change
-            // for windows that haven't changed).
             const windowState = this.controller?.getWindowState(windowId)
             if (windowState?.layout) {
                 this.logger.info(`No pane tabs yet for window @${windowId}, but layout is known — discovering panes proactively`)
-                // Extract pane IDs from the known layout and create pane tabs
                 const { parseTmuxLayout, flattenLayout } = await import('../layoutParser')
                 const layoutTree = parseTmuxLayout(windowState.layout)
                 if (layoutTree) {
@@ -453,47 +412,53 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             this.logger.info(`Mounting existing ${paneMap.size} pane(s) for window @${windowId}`)
         }
 
-        // 4. Rebuild SplitContainer tree with this window's panes
+        // 4. Attach views for all pane tabs
+        // Reset root tree so addTab() registers panes into a clean structure.
+        // We don't rely on the tree for layout (applyPixelLayout does that),
+        // but addTab() needs a valid root to attach ViewContainerRefs.
         this.root = new SplitContainer()
         this.root.orientation = 'h'
 
         const paneTabs = Array.from(paneMap.values())
         if (paneTabs.length > 0) {
-            this.logger.info(`Adding ${paneTabs.length} pane tab(s) to SplitTab`)
-            for (let i = 0; i < paneTabs.length; i++) {
-                const paneTab = paneTabs[i] as any
-                if (i === 0) {
-                    await this.addTab(paneTab, null, 'r')
-                } else {
-                    await this.addTab(paneTab, paneTabs[i - 1] as any, 'r')
+            for (const paneTab of paneTabs) {
+                if (!(this as any).viewRefs?.has(paneTab)) {
+                    await this.addTab(paneTab as any, null, 'r')
                 }
-                paneTab.emitVisibility(true)
+                ;(paneTab as any).emitVisibility(true)
+                ;(paneTab as any).emitFocused()
             }
 
-            // 5. Sync layout from tmux
+            // 5. Apply pixel layout from tmux
             const windowState = this.controller?.getWindowState(windowId)
             if (windowState?.layout) {
-                this.logger.info('Syncing layout after mounting panes')
-                await this.syncLayout(windowState.layout)
+                const layoutTree = parseTmuxLayout(windowState.layout)
+                if (layoutTree) {
+                    this.applyPixelLayout(layoutTree)
+                    this.updateDividers(layoutTree)
+                }
             }
         }
 
-        // 6. Detect changes; precise client size refresh happens via the
-        //    .pane-area ResizeObserver once xterm renders its cell grid.
+        // 6. Detect changes and push size
         this.cdr.detectChanges()
 
-        // 7. Push the correct client size to tmux once panes are mounted.
-        //    We use requestAnimationFrame to wait for xterm to render its
-        //    character grid (getCellSize needs real cell dimensions), then
-        //    force a non-deduplicated refresh-client -C.
         if (paneTabs.length > 0) {
             requestAnimationFrame(() => {
-                // Reset dedup so the next call always goes through
                 this._lastSentCols = 0
                 this._lastSentRows = 0
                 this.refreshClientSize()
             })
         }
+    }
+
+    /**
+     * Override layout() to no-op. SplitTab's layoutInternal() uses percentage
+     * positioning which conflicts with our pixel-absolute layout. Pane
+     * positioning is handled exclusively by applyPixelLayout().
+     */
+    override layout(): void {
+        // Intentionally empty — pixel-absolute layout replaces SplitTab layout.
     }
 
     /**
@@ -559,9 +524,6 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
         // Do NOT destroy self when root is empty — this is normal during
         // tmux window switches.
-    }
-
-    /**
     }
 
     /**
@@ -690,21 +652,18 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             if (remainingWindows.length > 0) {
                 await this.switchToWindow(remainingWindows[0])
             } else {
-                // No windows left — reset
-                this.root = new SplitContainer()
-                this.root.orientation = 'h'
-                this.layout()
+                // No windows left — clear dividers
+                this.clearDividers()
                 this.cdr.detectChanges()
             }
         }
     }
 
     /**
-     * Synchronize SplitTab layout with tmux's layout string.
+     * Synchronize layout with tmux's layout string.
      *
-     * This is the SINGLE place where the SplitTab tree is built.
-     * It creates missing pane tabs, attaches their views, cleans up stale
-     * panes, and rebuilds the entire tree from the tmux layout string.
+     * Creates missing pane tabs, attaches their views, cleans up stale
+     * panes, and positions everything via pixel-absolute layout.
      */
     private async syncLayout(layoutStr: string): Promise<void> {
         const layoutTree = parseTmuxLayout(layoutStr)
@@ -716,9 +675,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         const panes = flattenLayout(layoutTree)
         this.logger.info(`Syncing layout for window @${this.activeWindowId}: ${panes.length} panes`)
 
-        // Ensure pane tabs exist and have attached views for every pane in
-        // the layout. New panes (from split-window) are registered by
-        // handlePaneAdd but have no view yet — we call addTab to create one.
+        // Ensure pane tabs exist and have attached views
         if (this.activeWindowId !== null) {
             let paneMap = this.windowPaneTabs.get(this.activeWindowId)
             if (!paneMap) {
@@ -736,63 +693,41 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             }
 
             // Attach views for panes that don't have one yet.
-            // The tree structure will be rebuilt below, so the addTab direction
-            // doesn't matter — we just need the view to exist.
+            // Ensure root exists for addTab to register ViewContainerRefs.
+            if (!(this.root instanceof SplitContainer)) {
+                this.root = new SplitContainer()
+                this.root.orientation = 'h'
+            }
             for (const pane of panes) {
                 const paneTab = paneMap.get(pane.paneId)!
                 if (!(this as any).viewRefs?.has(paneTab)) {
                     this.logger.info(`Attaching view for pane %${pane.paneId}`)
-                    const existingTabs = this.getAllTabs()
-                    if (existingTabs.length === 0) {
-                        await this.addTab(paneTab as any, null, 'r')
-                    } else {
-                        await this.addTab(paneTab as any, existingTabs[existingTabs.length - 1] as any, 'r')
-                    }
+                    await this.addTab(paneTab as any, null, 'r')
                     ;(paneTab as any).emitVisibility(true)
                     ;(paneTab as any).emitFocused()
                 }
             }
-        }
 
-        // Detect and clean up stale pane tabs that are no longer in the layout.
-        // When tmux closes a pane, the %layout-change notification omits it.
-        // We remove the corresponding tab so the UI stays consistent.
-        if (this.activeWindowId !== null) {
-            const paneMap = this.windowPaneTabs.get(this.activeWindowId)
-            if (paneMap) {
-                const layoutPaneIds = new Set(panes.map(p => p.paneId))
-                for (const [paneId, paneTab] of paneMap) {
-                    if (!layoutPaneIds.has(paneId)) {
-                        this.logger.info(`Pane %${paneId} no longer in layout, cleaning up`)
-                        paneMap.delete(paneId)
-                        ;(paneTab as any).emitVisibility(false)
-                        this.detachPaneView(paneTab as any)
-                        ;(paneTab as any).destroy()
-                    }
+            // Clean up stale pane tabs no longer in the layout
+            const layoutPaneIds = new Set(panes.map(p => p.paneId))
+            for (const [paneId, paneTab] of paneMap) {
+                if (!layoutPaneIds.has(paneId)) {
+                    this.logger.info(`Pane %${paneId} no longer in layout, cleaning up`)
+                    paneMap.delete(paneId)
+                    ;(paneTab as any).emitVisibility(false)
+                    this.detachPaneView(paneTab as any)
+                    ;(paneTab as any).destroy()
                 }
             }
         }
 
-        // Build the SplitContainer tree from the parsed layout
-        const newRoot = this.buildSplitContainerFromLayout(layoutTree)
-        if (newRoot instanceof SplitContainer) {
-            this.root = newRoot
-            this.layout()
-        } else if (newRoot) {
-            // Single pane — wrap in a container
-            this.root = new SplitContainer()
-            this.root.orientation = 'h'
-            this.root.children.push(newRoot as any)
-            this.root.ratios.push(1)
-            this.layout()
-        }
+        // Position panes using pixel-absolute layout + set character grids
+        this.applyPixelLayout(layoutTree)
+
+        // Update divider elements
+        this.updateDividers(layoutTree)
 
         this.cdr.detectChanges()
-
-        // tmux is authoritative over each pane's character grid: push the exact
-        // cell dimensions from the layout string into each xterm. This keeps
-        // wrapping aligned with tmux and avoids any pixel-derived resize.
-        this.applyLayoutGrids(layoutTree)
     }
 
     /**
@@ -811,44 +746,42 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         if (windowId === this.activeWindowId) {
             ;(paneTab as any).emitVisibility(false)
             this.detachPaneView(paneTab as any)
-            this.layout()
             this.cdr.detectChanges()
         }
         ;(paneTab as any).destroy()
     }
 
     /**
-     * Build a SplitContainer tree from a tmux layout node.
+     * Position each pane using tmux's absolute character coordinates × cell pixel size.
+     * Also sets the xterm character grid for each pane. One pass, zero rounding.
      */
-    private buildSplitContainerFromLayout(node: TmuxLayoutNode): SplitContainer | TmuxPaneTabComponent | null {
-        if (node.type === 'pane' && node.paneId !== undefined && this.activeWindowId !== null) {
-            const paneMap = this.windowPaneTabs.get(this.activeWindowId)
-            return paneMap?.get(node.paneId) || null
-        }
+    private applyPixelLayout(layoutTree: TmuxLayoutNode): void {
+        const cell = this.getCellSize()
+        if (!cell) return
 
-        if (!node.children || node.children.length === 0) {
-            return null
-        }
+        const paneMap = this.windowPaneTabs.get(this.activeWindowId!)
+        if (!paneMap) return
 
-        const container = new SplitContainer()
-        container.orientation = node.type === 'horizontal' ? 'h' : 'v'
+        for (const pane of flattenLayout(layoutTree)) {
+            const paneTab = paneMap.get(pane.paneId) as any
+            if (!paneTab) continue
 
-        const totalSize = node.type === 'horizontal'
-            ? node.children.reduce((sum, c) => sum + c.width, 0)
-            : node.children.reduce((sum, c) => sum + c.height, 0)
+            // Set pixel position from tmux char coords
+            const viewRef = (this as any).viewRefs?.get(paneTab)
+            if (viewRef) {
+                const el = viewRef.rootNodes[0] as HTMLElement
+                el.classList.add('child')
+                el.style.left   = `${pane.x * cell.width}px`
+                el.style.top    = `${pane.y * cell.height}px`
+                el.style.width  = `${pane.width * cell.width}px`
+                el.style.height = `${pane.height * cell.height}px`
+            }
 
-        for (const child of node.children) {
-            const childComponent = this.buildSplitContainerFromLayout(child)
-            if (childComponent) {
-                container.children.push(childComponent as any)
-                const ratio = totalSize > 0
-                    ? (node.type === 'horizontal' ? child.width / totalSize : child.height / totalSize)
-                    : 1 / node.children.length
-                container.ratios.push(ratio)
+            // Set xterm character grid
+            if (paneTab.setTmuxGrid) {
+                paneTab.setTmuxGrid(pane.width, pane.height)
             }
         }
-
-        return container.children.length > 0 ? container : null
     }
 
     /**
@@ -897,33 +830,11 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     }
 
     /**
-     * Apply the tmux-authoritative character grid to each mounted pane.
-     *
-     * tmux's layout string gives the exact width/height (in cells) of every
-     * pane. We push those directly into the corresponding xterm so display
-     * wrapping matches tmux exactly. xterm auto-fit is disabled for tmux panes,
-     * so this is the only thing that sizes them.
-     */
-    private applyLayoutGrids(layoutTree: TmuxLayoutNode): void {
-        if (this.activeWindowId === null) return
-        const paneMap = this.windowPaneTabs.get(this.activeWindowId)
-        if (!paneMap) return
-
-        for (const pane of flattenLayout(layoutTree)) {
-            const paneTab = paneMap.get(pane.paneId) as any
-            if (paneTab?.setTmuxGrid) {
-                paneTab.setTmuxGrid(pane.width, pane.height)
-            }
-        }
-    }
-
-    /**
      * Measure the whole-window character grid from the .pane-area container.
      *
-     * The container width includes per-pane decorations (xterm scrollbar +
-     * padding) and UI spanner dividers, none of which belong to the tmux
-     * character grid. We subtract them, divide by the real xterm cell size,
-     * then add tmux's 1-char dividers between panes so tmux's own grid lines up.
+     * Pure pixel-to-cell conversion. No padding, no scrollbar, no divider
+     * compensation — pane containers are exactly cols×cell pixels, scrollbar
+     * is overlay, dividers are 1px overlay elements.
      */
     private measureClientSize(): { cols: number; rows: number } | null {
         const host = this.hostElement.nativeElement as HTMLElement
@@ -934,41 +845,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         const cell = this.getCellSize()
         if (!cell) return null
 
-        // Determine pane/split counts for the active window.
-        const paneMap = this.activeWindowId !== null
-            ? this.windowPaneTabs.get(this.activeWindowId)
-            : null
-        const paneCount = paneMap?.size ?? 1
-
-        // UI spanner pixel widths: tabby's split-tab-spanner is 10px each.
-        // Our custom tmux dividers are purely visual overlays with no pixel cost.
-        // _spanners is still populated by layoutInternal() for tabby's internal
-        // bookkeeping, but we no longer render split-tab-spanner elements, so
-        // their pixel width should not be subtracted here.
-        const spannerPx = 0
-        // Per-pane visual padding defined in tmuxPaneTab.component.scss.
-        // Each pane has 4px on all sides (8px total per axis).
-        // For N panes in a row: total horizontal padding = N * 8px.
-        // For N panes in a column: total vertical padding = N * 8px.
-        // Approximate as all panes contributing to both axes (safe overestimate).
-        const panePadPerAxis = 8
-        const totalPadPx = paneCount * panePadPerAxis
-
-        const availableWidth = rect.width - spannerPx - totalPadPx
-        const availableHeight = rect.height - totalPadPx
-
-        const contentCols = Math.floor(availableWidth / cell.width)
-        const contentRows = Math.floor(availableHeight / cell.height)
-
-        // tmux inserts a 1-char divider between adjacent panes; add them back so
-        // the size we report covers content + dividers (tmux subtracts them again
-        // when splitting). Approximate as a horizontal split (most common case).
-        const numDividers = Math.max(0, paneCount - 1)
-        const cols = contentCols + numDividers
-
         return {
-            cols: Math.max(2, cols),
-            rows: Math.max(1, contentRows),
+            cols: Math.max(2, Math.floor(rect.width / cell.width)),
+            rows: Math.max(1, Math.floor(rect.height / cell.height)),
         }
     }
 
@@ -1001,180 +880,188 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         }, debounceMs)
     }
 
-    // ─── Border-based pane separator ────────────────────────────────────────
-
-    /** Pixels from the right/bottom edge of a .child that counts as "on border" */
-    private static readonly BORDER_HIT = 10
+    // ─── Divider management ──────────────────────────────────────────────────
 
     /**
-     * Attach mousemove + mousedown handlers to .pane-area so that hovering
-     * near a .child's right/bottom border highlights it, and dragging starts
-     * a tmux resize-pane operation.
+     * Generate independent divider <div> elements for adjacent pane boundaries.
+     * Walks the layout tree to find sibling edges and creates draggable lines.
      */
-    private attachPaneAreaBorderHandlers(): void {
+    private updateDividers(layoutTree: TmuxLayoutNode): void {
         const host = this.hostElement.nativeElement as HTMLElement
-        const paneArea = host.querySelector('.pane-area') as HTMLElement | null
+        const paneArea = host.querySelector('.pane-area') as HTMLElement
         if (!paneArea) return
 
-        const HIT = TmuxSessionTabComponent.BORDER_HIT
+        this.clearDividers()
 
-        // Track which child + edge is currently hovered
-        let hoveredChild: Element | null = null
-        let hoveredEdge: 'right' | 'bottom' | null = null
+        const cell = this.getCellSize()
+        if (!cell) return
 
-        const clearHover = () => {
-            if (hoveredChild) {
-                hoveredChild.classList.remove('border-hover-right', 'border-hover-bottom')
-            }
-            hoveredChild = null
-            hoveredEdge = null
-            paneArea.style.cursor = ''
-        }
-
-        const onMove = (e: MouseEvent) => {
-            const areaRect = paneArea.getBoundingClientRect()
-            const mx = e.clientX - areaRect.left
-            const my = e.clientY - areaRect.top
-
-            // Find a .child whose right or bottom border is within HIT pixels
-            clearHover()
-            const children = paneArea.querySelectorAll('.child')
-            for (const child of Array.from(children)) {
-                const el = child as HTMLElement
-                const r = el.getBoundingClientRect()
-                const right = r.right - areaRect.left
-                const bottom = r.bottom - areaRect.top
-                const left = r.left - areaRect.left
-                const top = r.top - areaRect.top
-
-                // Right border hit: within HIT of right edge, vertically inside
-                if (Math.abs(mx - right) <= HIT && my >= top && my <= bottom) {
-                    el.classList.add('border-hover-right')
-                    paneArea.style.cursor = 'col-resize'
-                    hoveredChild = el
-                    hoveredEdge = 'right'
-                    break
-                }
-                // Bottom border hit: within HIT of bottom edge, horizontally inside
-                if (Math.abs(my - bottom) <= HIT && mx >= left && mx <= right) {
-                    el.classList.add('border-hover-bottom')
-                    paneArea.style.cursor = 'row-resize'
-                    hoveredChild = el
-                    hoveredEdge = 'bottom'
-                    break
-                }
-            }
-        }
-
-        const onDown = (e: MouseEvent) => {
-            if (!hoveredChild || !hoveredEdge || !this.controller) return
-            e.preventDefault()
-            e.stopPropagation()
-
-            const edge = hoveredEdge
-            const cell = this.getCellSize()
-            if (!cell) return
-
-            const startX = e.clientX
-            const startY = e.clientY
-
-            // Find the pane ID for this .child element
-            const resizeTarget = hoveredChild
-            const paneId = this.findPaneIdForElement(resizeTarget)
-            if (paneId === null) return
-
-            // Track last sent delta to send incremental resize commands
-            let lastSentCols = 0
-            let lastSentRows = 0
-
-            const onDragMove = (de: MouseEvent) => {
-                document.body.style.cursor = edge === 'right' ? 'col-resize' : 'row-resize'
-
-                if (edge === 'right') {
-                    const deltaCols = Math.round((de.clientX - startX) / cell.width)
-                    if (deltaCols !== lastSentCols) {
-                        const diff = deltaCols - lastSentCols
-                        const flag = diff > 0 ? '-R' : '-L'
-                        this.controller!.gateway.sendCommand(
-                            `resize-pane ${flag} -t %${paneId} ${Math.abs(diff)}`
-                        )
-                        lastSentCols = deltaCols
-                    }
-                } else {
-                    const deltaRows = Math.round((de.clientY - startY) / cell.height)
-                    if (deltaRows !== lastSentRows) {
-                        const diff = deltaRows - lastSentRows
-                        const flag = diff > 0 ? '-D' : '-U'
-                        this.controller!.gateway.sendCommand(
-                            `resize-pane ${flag} -t %${paneId} ${Math.abs(diff)}`
-                        )
-                        lastSentRows = deltaRows
-                    }
-                }
-            }
-
-            const onDragUp = () => {
-                document.removeEventListener('mousemove', onDragMove)
-                document.removeEventListener('mouseup', onDragUp)
-                document.body.style.cursor = ''
-                clearHover()
-            }
-
-            document.addEventListener('mousemove', onDragMove)
-            document.addEventListener('mouseup', onDragUp)
-        }
-
-        const onLeave = () => clearHover()
-
-        this._paneAreaMouseMoveHandler = onMove
-        this._paneAreaMouseDownHandler = onDown
-        paneArea.addEventListener('mousemove', onMove)
-        paneArea.addEventListener('mousedown', onDown)
-        paneArea.addEventListener('mouseleave', onLeave)
-    }
-
-    private detachPaneAreaBorderHandlers(): void {
-        const host = this.hostElement.nativeElement as HTMLElement
-        const paneArea = host.querySelector('.pane-area') as HTMLElement | null
-        if (!paneArea) return
-        if (this._paneAreaMouseMoveHandler) {
-            paneArea.removeEventListener('mousemove', this._paneAreaMouseMoveHandler)
-            this._paneAreaMouseMoveHandler = null
-        }
-        if (this._paneAreaMouseDownHandler) {
-            paneArea.removeEventListener('mousedown', this._paneAreaMouseDownHandler)
-            this._paneAreaMouseDownHandler = null
-        }
+        this.collectDividers(layoutTree, cell, paneArea)
     }
 
     /**
-     * Map a .child DOM element back to the tmux pane ID it represents.
+     * Recursively collect divider lines from the layout tree.
+     * For each container node, consecutive children share a boundary → divider.
+     *
+     * tmux layout semantics:
+     * - 'vertical' ([...]): children stacked top-to-bottom → horizontal divider line
+     * - 'horizontal' ({...}): children side-by-side → vertical divider line
+     *
+     * Same-level siblings always share the same cross-axis extent (tmux guarantees
+     * this for its binary splits), so divider size is simply derived from the parent.
+     *
+     * For container children (non-leaf), we find the actual pane IDs at the
+     * boundary using helper methods so drag-resize works at every level.
      */
-    private findPaneIdForElement(el: Element): number | null {
-        if (this.activeWindowId === null) return null
-        const paneMap = this.windowPaneTabs.get(this.activeWindowId)
-        if (!paneMap) return null
-        for (const [paneId, paneTab] of paneMap) {
-            const tabEl = (paneTab as any).hostElement?.nativeElement
-                ?? (paneTab as any).element?.nativeElement
-            if (tabEl && (tabEl === el || tabEl.contains(el) || el.contains(tabEl))) {
-                return paneId
+    private collectDividers(node: TmuxLayoutNode, cell: { width: number; height: number }, paneArea: HTMLElement): void {
+        if (!node.children || node.children.length < 2) {
+            return
+        }
+
+        for (let i = 0; i < node.children.length - 1; i++) {
+            const left = node.children[i]
+            const right = node.children[i + 1]
+
+            if (node.type === 'horizontal') {
+                // Children are side-by-side → vertical divider between left and right
+                // Divider is 1 cell wide, centered at the shared boundary
+                const x = (left.x + left.width) * cell.width
+                const top = node.y * cell.height
+                const height = node.height * cell.height
+
+                // Find the rightmost pane(s) in `left` and leftmost pane(s) in `right`
+                const paneIdA = this.getRightmostLeafPaneId(left)
+                const paneIdB = this.getLeftmostLeafPaneId(right)
+
+                this.createDividerElement(paneArea, 'v', x, top, cell.width, height, paneIdA, paneIdB, cell)
+            } else {
+                // Children are stacked top-to-bottom → horizontal divider between top and bottom
+                // Divider is 1 cell tall, centered at the shared boundary
+                const y = (left.y + left.height) * cell.height
+                const leftPx = node.x * cell.width
+                const width = node.width * cell.width
+
+                // Find the bottommost pane(s) in `left` and topmost pane(s) in `right`
+                const paneIdA = this.getBottommostLeafPaneId(left)
+                const paneIdB = this.getTopmostLeafPaneId(right)
+
+                this.createDividerElement(paneArea, 'h', leftPx, y, width, cell.height, paneIdA, paneIdB, cell)
             }
         }
-        return null
+
+        // Recurse into children
+        for (const child of node.children) {
+            this.collectDividers(child, cell, paneArea)
+        }
     }
 
-    // ─── (legacy divider stubs removed) ─────────────────────────────────────
+    /** Find the rightmost leaf pane in a layout subtree (for vertical divider) */
+    private getRightmostLeafPaneId(node: TmuxLayoutNode): number | undefined {
+        if (node.type === 'pane') return node.paneId
+        if (!node.children?.length) return undefined
+        return this.getRightmostLeafPaneId(node.children[node.children.length - 1])
+    }
+
+    /** Find the leftmost leaf pane in a layout subtree (for vertical divider) */
+    private getLeftmostLeafPaneId(node: TmuxLayoutNode): number | undefined {
+        if (node.type === 'pane') return node.paneId
+        if (!node.children?.length) return undefined
+        return this.getLeftmostLeafPaneId(node.children[0])
+    }
+
+    /** Find the bottommost leaf pane in a layout subtree (for horizontal divider) */
+    private getBottommostLeafPaneId(node: TmuxLayoutNode): number | undefined {
+        if (node.type === 'pane') return node.paneId
+        if (!node.children?.length) return undefined
+        return this.getBottommostLeafPaneId(node.children[node.children.length - 1])
+    }
+
+    /** Find the topmost leaf pane in a layout subtree (for horizontal divider) */
+    private getTopmostLeafPaneId(node: TmuxLayoutNode): number | undefined {
+        if (node.type === 'pane') return node.paneId
+        if (!node.children?.length) return undefined
+        return this.getTopmostLeafPaneId(node.children[0])
+    }
 
     /**
-     * Override onSpannerAdjusted to notify tmux of layout change.
-     * When the user drags a spanner (split divider), the pane containers
-     * resize and xterm.js auto-fits. We need to tell tmux the new client size
-     * so it can recalculate its layout accordingly.
+     * Create a single divider DOM element with drag-to-resize behavior.
      */
-    override onSpannerAdjusted(spanner: any): void {
-        super.onSpannerAdjusted(spanner)
-        this.scheduleRefreshClientSize()
+    private createDividerElement(
+        paneArea: HTMLElement,
+        orientation: 'v' | 'h',
+        x: number, y: number, w: number, h: number,
+        paneIdA: number | undefined, paneIdB: number | undefined,
+        cell: { width: number; height: number },
+    ): void {
+        const div = document.createElement('div')
+        div.className = `tmux-divider ${orientation}`
+        div.style.left = `${x}px`
+        div.style.top = `${y}px`
+        div.style.width = `${w}px`
+        div.style.height = `${h}px`
+
+        // Divider is already 1 cell wide/tall — natural hit target matches tmux
+
+        if (paneIdA !== undefined && paneIdB !== undefined) {
+            const onDown = (e: MouseEvent) => {
+                e.preventDefault()
+                e.stopPropagation()
+
+                const startX = e.clientX
+                const startY = e.clientY
+                let lastSentCols = 0
+                let lastSentRows = 0
+
+                const onMove = (de: MouseEvent) => {
+                    document.body.style.cursor = orientation === 'v' ? 'col-resize' : 'row-resize'
+
+                    if (orientation === 'v') {
+                        const deltaCols = Math.round((de.clientX - startX) / cell.width)
+                        if (deltaCols !== lastSentCols) {
+                            const diff = deltaCols - lastSentCols
+                            const flag = diff > 0 ? '-R' : '-L'
+                            this.controller?.gateway.sendCommand(
+                                `resize-pane ${flag} -t %${paneIdA} ${Math.abs(diff)}`
+                            )
+                            lastSentCols = deltaCols
+                        }
+                    } else {
+                        const deltaRows = Math.round((de.clientY - startY) / cell.height)
+                        if (deltaRows !== lastSentRows) {
+                            const diff = deltaRows - lastSentRows
+                            const flag = diff > 0 ? '-D' : '-U'
+                            this.controller?.gateway.sendCommand(
+                                `resize-pane ${flag} -t %${paneIdA} ${Math.abs(diff)}`
+                            )
+                            lastSentRows = deltaRows
+                        }
+                    }
+                }
+
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove)
+                    document.removeEventListener('mouseup', onUp)
+                    document.body.style.cursor = ''
+                }
+
+                document.addEventListener('mousemove', onMove)
+                document.addEventListener('mouseup', onUp)
+            }
+            div.addEventListener('mousedown', onDown)
+        }
+
+        paneArea.appendChild(div)
+        this._dividerElements.push(div)
+    }
+
+    /**
+     * Remove all divider elements from the DOM.
+     */
+    private clearDividers(): void {
+        for (const el of this._dividerElements) {
+            el.remove()
+        }
+        this._dividerElements = []
     }
 
     // --- UI Event Handlers ---
@@ -1217,7 +1104,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             clearTimeout(this._resizeTimer)
             this._resizeTimer = null
         }
-        this.detachPaneAreaBorderHandlers()
+        this.clearDividers()
         super.ngOnDestroy()
     }
 
