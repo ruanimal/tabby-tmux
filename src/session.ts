@@ -220,6 +220,10 @@ interface WindowState {
     id: number
     name: string
     layout?: string
+    /** Saved layout when pane is zoomed (the real multi-pane layout) */
+    visibleLayout?: string
+    /** Pane ID of the zoomed pane, if any */
+    zoomedPaneId?: number
     panes: Set<number>
 }
 
@@ -351,7 +355,19 @@ export class TmuxController {
         this.gateway.layoutChange$.subscribe(({ windowId, layout, visibleLayout, zoomed }) => {
             const state = this.windowStates.get(windowId)
             if (state) {
+                // tmux %layout-change semantics:
+                //   layout       = real multi-pane layout (all panes, actual sizes)
+                //   visibleLayout = what tmux displays (zoomed single pane when zoomed)
                 state.layout = layout
+                if (zoomed && visibleLayout) {
+                    // Extract zoomed pane ID from visibleLayout (the single pane filling window)
+                    const m = /\d+x\d+,\d+,\d+,(\d+)/.exec(visibleLayout)
+                    state.zoomedPaneId = m ? parseInt(m[1]) : undefined
+                    state.visibleLayout = visibleLayout
+                } else {
+                    state.zoomedPaneId = undefined
+                    state.visibleLayout = undefined
+                }
             }
 
             // Discover new panes from the layout string, then emit layout-change
@@ -540,15 +556,18 @@ export class TmuxController {
         visibleLayout?: string,
         zoomed?: boolean
     ): Promise<void> {
-        // Extract pane IDs from the layout string
-        // Pane IDs appear as trailing numbers in layout leaf nodes like "80x24,0,0,3"
-        // Match pattern: dimension,position,paneId  (paneId is the last number after the last comma)
+        // Extract pane IDs from layout strings.
+        // When zoomed, the layout only contains the zoomed pane — also scan
+        // visibleLayout (the real multi-pane layout) so all panes are discovered.
         const paneIdSet = new Set<number>()
-        // Match all occurrences of ,\d+ at the end of leaf node specs
         const leafPattern = /\d+x\d+,\d+,\d+,(\d+)/g
         let m: RegExpExecArray | null
-        while ((m = leafPattern.exec(layout)) !== null) {
-            paneIdSet.add(parseInt(m[1]))
+        const layoutsToScan = zoomed && visibleLayout ? [layout, visibleLayout] : [layout]
+        for (const ls of layoutsToScan) {
+            leafPattern.lastIndex = 0
+            while ((m = leafPattern.exec(ls)) !== null) {
+                paneIdSet.add(parseInt(m[1]))
+            }
         }
 
         if (paneIdSet.size === 0) return
@@ -563,6 +582,31 @@ export class TmuxController {
             if (!this.knownPanes.has(paneId)) {
                 this.knownPanes.add(paneId)
                 newPaneIds.push({ paneId, windowId })
+            }
+        }
+
+        // Remove panes no longer in the layout (only when not zoomed).
+        // When zoomed, the real layout is in visibleLayout, and pane-close
+        // events should handle cleanup of actually closed panes.
+        if (!zoomed && windowState) {
+            const closedPaneIds: number[] = []
+            for (const paneId of windowState.panes) {
+                if (!paneIdSet.has(paneId)) {
+                    closedPaneIds.push(paneId)
+                }
+            }
+            for (const paneId of closedPaneIds) {
+                windowState.panes.delete(paneId)
+                this.knownPanes.delete(paneId)
+                // Clean up pane session
+                const session = this.paneSessions.get(paneId)
+                if (session) {
+                    session.destroy()
+                    this.paneSessions.delete(paneId)
+                }
+                this.pendingPaneOutput.delete(paneId)
+                this.log.info(`Removed closed pane %${paneId} from window @${windowId} (not in layout)`)
+                this.events.next({ type: 'pane-close', paneId, windowId })
             }
         }
 
@@ -948,6 +992,17 @@ export class TmuxController {
 
     async killPane(paneId: number): Promise<void> {
         await this.gateway.sendCommand(`kill-pane -t %${paneId}`, TMUX_COMMAND_TOLERATE_ERRORS)
+    }
+
+    /**
+     * Toggle zoom on a pane (tmux prefix+z equivalent).
+     * When zoomed, the pane fills the entire window; other panes are hidden.
+     */
+    async zoomPane(paneId: number): Promise<void> {
+        await this.gateway.sendCommand(
+            `resize-pane -Z -t %${paneId}`,
+            TMUX_COMMAND_TOLERATE_ERRORS
+        )
     }
 
     // --- Window Operations ---

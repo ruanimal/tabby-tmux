@@ -356,7 +356,11 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 if (event.windowId !== undefined && event.data?.layout) {
                     if (event.windowId === this.activeWindowId) {
                         this.logger.info(`Syncing layout for active window @${event.windowId}`)
-                        await this.syncLayout(event.data.layout)
+                        await this.syncLayout(
+                            event.data.layout,
+                            event.data.zoomed,
+                            event.data.visibleLayout
+                        )
                     } else {
                         this.logger.info(`Layout changed for inactive window @${event.windowId}, saved for next switch`)
                     }
@@ -427,35 +431,67 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             this.logger.info(`Mounting existing ${paneMap.size} pane(s) for window @${windowId}`)
         }
 
-        // 4. Attach views for all pane tabs
-        // Reset root tree so addTab() registers panes into a clean structure.
-        // We don't rely on the tree for layout (applyPixelLayout does that),
-        // but addTab() needs a valid root to attach ViewContainerRefs.
-        this.root = new SplitContainer()
-        this.root.orientation = 'h'
+        // 4. Determine zoom state and discover all pane tabs needed.
+        // layout = real multi-pane layout (always has all pane IDs)
+        // visibleLayout = zoomed display layout (single pane filling window)
+        const windowState = this.controller?.getWindowState(windowId)
+        const isZoomed = !!windowState?.zoomedPaneId
 
-        const paneTabs = Array.from(paneMap.values())
-        if (paneTabs.length > 0) {
-            for (const paneTab of paneTabs) {
-                if (!(this as any).viewRefs?.has(paneTab)) {
-                    await this.addTab(paneTab as any, null, 'r')
-                }
-                ;(paneTab as any).emitVisibility(true)
-                ;(paneTab as any).emitFocused()
-            }
-
-            // 5. Apply pixel layout from tmux
-            const windowState = this.controller?.getWindowState(windowId)
-            if (windowState?.layout) {
-                const layoutTree = parseTmuxLayout(windowState.layout)
-                if (layoutTree) {
-                    this.applyPixelLayout(layoutTree)
-                    this.updateDividers(layoutTree)
+        // Ensure pane tabs for ALL panes exist (discovered from layout, which is always real)
+        if (windowState?.layout) {
+            const fullTree = parseTmuxLayout(windowState.layout)
+            if (fullTree) {
+                for (const pane of flattenLayout(fullTree)) {
+                    if (!paneMap.has(pane.paneId)) {
+                        this.logger.info(`Creating pane tab for %${pane.paneId}` + (isZoomed ? ' (zoomed window)' : ''))
+                        const paneTab = this.createPaneTab(pane.paneId)
+                        paneTab.controller = this.controller!
+                        paneTab.paneId = pane.paneId
+                        paneMap.set(pane.paneId, paneTab)
+                    }
                 }
             }
         }
 
-        // 6. Detect changes and push size
+        // 5. Attach views for display pane tabs only
+        // Reset root tree so addTab() registers panes into a clean structure.
+        this.root = new SplitContainer()
+        this.root.orientation = 'h'
+
+        // Display layout: visibleLayout when zoomed (what's on screen), layout otherwise
+        const displayLayoutStr = isZoomed && windowState?.visibleLayout
+            ? windowState.visibleLayout
+            : windowState?.layout
+        const displayTree = displayLayoutStr ? parseTmuxLayout(displayLayoutStr) : null
+        const displayPaneIds = displayTree
+            ? new Set(flattenLayout(displayTree).map(p => p.paneId))
+            : new Set(paneMap.keys()) // no layout → show all
+
+        const paneTabs = Array.from(paneMap.values())
+        if (paneTabs.length > 0) {
+            for (const paneTab of paneTabs) {
+                const isDisplay = displayPaneIds.has(paneTab.paneId)
+                if (!(this as any).viewRefs?.has(paneTab)) {
+                    if (isDisplay) {
+                        await this.addTab(paneTab as any, null, 'r')
+                    }
+                }
+                if (isDisplay) {
+                    ;(paneTab as any).emitVisibility(true)
+                    ;(paneTab as any).emitFocused()
+                } else {
+                    ;(paneTab as any).emitVisibility(false)
+                }
+            }
+
+            // 6. Apply pixel layout from tmux
+            if (displayTree) {
+                this.applyPixelLayout(displayTree)
+                this.updateDividers(displayTree)
+            }
+        }
+
+        // 7. Detect changes and push size
         this.cdr.detectChanges()
 
         if (paneTabs.length > 0) {
@@ -692,15 +728,32 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * Creates missing pane tabs, attaches their views, cleans up stale
      * panes, and positions everything via pixel-absolute layout.
      */
-    private async syncLayout(layoutStr: string): Promise<void> {
-        const layoutTree = parseTmuxLayout(layoutStr)
-        if (!layoutTree) {
-            this.logger.warn('Failed to parse layout:', layoutStr)
+    private async syncLayout(layoutStr: string, zoomed?: boolean, visibleLayout?: string): Promise<void> {
+        // tmux %layout-change semantics:
+        //   layout  = real multi-pane layout (all panes, their actual sizes)
+        //   visibleLayout = layout that tmux actually displays on screen
+        // When zoomed: visibleLayout is the single zoomed pane filling the window.
+        //
+        // For display, use visibleLayout when zoomed (what's on screen), layout otherwise.
+        // For pane discovery, always use layout (has all pane IDs).
+
+        // Display layout: what's actually shown on screen
+        const displayLayoutStr = zoomed && visibleLayout ? visibleLayout : layoutStr
+        const displayTree = parseTmuxLayout(displayLayoutStr)
+        if (!displayTree) {
+            this.logger.warn('Failed to parse display layout:', displayLayoutStr)
             return
         }
+        const displayPanes = flattenLayout(displayTree)
+        const displayPaneIds = new Set(displayPanes.map(p => p.paneId))
 
-        const panes = flattenLayout(layoutTree)
-        this.logger.info(`Syncing layout for window @${this.activeWindowId}: ${panes.length} panes`)
+        // Full pane list from layout (always the real multi-pane layout)
+        const fullTree = parseTmuxLayout(layoutStr)
+        const allPanes = fullTree ? flattenLayout(fullTree) : displayPanes
+
+        this.logger.info(`Syncing layout for window @${this.activeWindowId}: ` +
+            `${displayPanes.length} display pane(s), ${allPanes.length} total` +
+            (zoomed ? ' (zoomed)' : ''))
 
         // Ensure pane tabs exist and have attached views
         if (this.activeWindowId !== null) {
@@ -709,7 +762,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 paneMap = new Map()
                 this.windowPaneTabs.set(this.activeWindowId, paneMap)
             }
-            for (const pane of panes) {
+
+            // Create pane tabs for ALL panes (including hidden ones when zoomed)
+            for (const pane of allPanes) {
                 if (!paneMap.has(pane.paneId)) {
                     this.logger.info(`Creating pane tab for %${pane.paneId} during layout sync`)
                     const paneTab = this.createPaneTab(pane.paneId)
@@ -719,40 +774,55 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 }
             }
 
-            // Attach views for panes that don't have one yet.
             // Ensure root exists for addTab to register ViewContainerRefs.
             if (!(this.root instanceof SplitContainer)) {
                 this.root = new SplitContainer()
                 this.root.orientation = 'h'
             }
-            for (const pane of panes) {
+
+            // Attach views for panes that should be displayed
+            for (const pane of displayPanes) {
                 const paneTab = paneMap.get(pane.paneId)!
                 if (!(this as any).viewRefs?.has(paneTab)) {
                     this.logger.info(`Attaching view for pane %${pane.paneId}`)
                     await this.addTab(paneTab as any, null, 'r')
-                    ;(paneTab as any).emitVisibility(true)
-                    ;(paneTab as any).emitFocused()
+                }
+                ;(paneTab as any).emitVisibility(true)
+                ;(paneTab as any).emitFocused()
+            }
+
+            // Hide panes not in the display set (e.g. non-zoomed panes)
+            for (const [paneId, paneTab] of paneMap) {
+                if (!displayPaneIds.has(paneId)) {
+                    ;(paneTab as any).emitVisibility(false)
+                    if ((this as any).viewRefs?.has(paneTab)) {
+                        this.detachPaneView(paneTab as any)
+                    }
                 }
             }
 
-            // Clean up stale pane tabs no longer in the layout
-            const layoutPaneIds = new Set(panes.map(p => p.paneId))
-            for (const [paneId, paneTab] of paneMap) {
-                if (!layoutPaneIds.has(paneId)) {
-                    this.logger.info(`Pane %${paneId} no longer in layout, cleaning up`)
-                    paneMap.delete(paneId)
-                    ;(paneTab as any).emitVisibility(false)
-                    this.detachPaneView(paneTab as any)
-                    ;(paneTab as any).destroy()
+            // Clean up stale pane tabs no longer in the full layout.
+            // When zoomed, only clean up panes absent from visibleLayout;
+            // panes hidden by zoom are still alive in tmux.
+            if (!zoomed) {
+                const fullPaneIds = new Set(allPanes.map(p => p.paneId))
+                for (const [paneId, paneTab] of paneMap) {
+                    if (!fullPaneIds.has(paneId)) {
+                        this.logger.info(`Pane %${paneId} no longer in layout, cleaning up`)
+                        paneMap.delete(paneId)
+                        ;(paneTab as any).emitVisibility(false)
+                        this.detachPaneView(paneTab as any)
+                        ;(paneTab as any).destroy()
+                    }
                 }
             }
         }
 
         // Position panes using pixel-absolute layout + set character grids
-        this.applyPixelLayout(layoutTree)
+        this.applyPixelLayout(displayTree)
 
         // Update divider elements
-        this.updateDividers(layoutTree)
+        this.updateDividers(displayTree)
 
         this.cdr.detectChanges()
     }
@@ -763,6 +833,10 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * Note: we do NOT activate a neighboring pane here. tmux sends
      * %window-pane-changed after closing a pane, which triggers
      * handleActivePaneChanged() to focus the correct pane.
+     *
+     * When zoomed, closing a hidden pane just removes it from the map.
+     * Closing the zoomed pane triggers tmux to auto-unzoom + kill,
+     * which sends %layout-change to restore the real layout.
      */
     private handlePaneClose(paneId: number, windowId: number): void {
         const paneMap = this.windowPaneTabs.get(windowId)
@@ -774,7 +848,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         this.logger.info(`Cleaning up closed pane %${paneId} in window @${windowId}`)
         paneMap.delete(paneId)
 
-        if (windowId === this.activeWindowId) {
+        // Only detach view if it's actually attached (visible panes).
+        // Hidden panes (e.g. non-zoomed panes when zoomed) are already detached.
+        if (windowId === this.activeWindowId && (this as any).viewRefs?.has(paneTab)) {
             ;(paneTab as any).emitVisibility(false)
             this.detachPaneView(paneTab as any)
             this.cdr.detectChanges()

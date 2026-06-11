@@ -239,6 +239,12 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
                 ] as MenuItemOptions[],
             },
             {
+                label: this.translate.instant('Zoom pane'),
+                type: 'checkbox',
+                checked: this._isZoomed,
+                click: () => this.toggleZoom(),
+            },
+            {
                 label: this.translate.instant('Focus all tmux panes'),
                 type: 'checkbox',
                 checked: this._tmuxSyncInput,
@@ -257,6 +263,24 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         event.preventDefault()
         event.stopPropagation()
         this.platform.popupContextMenu(await this.buildContextMenu(), event)
+    }
+
+    /** Whether this pane is currently zoomed (fills the entire window). */
+    get _isZoomed (): boolean {
+        if (!this.controller || !this.paneId) return false
+        // Find which window owns this pane
+        for (const ws of this.controller.getAllWindowStates()) {
+            if (ws.panes.has(this.paneId)) {
+                return ws.zoomedPaneId === this.paneId
+            }
+        }
+        return false
+    }
+
+    /** Toggle zoom via tmux resize-pane -Z (same as prefix+z). */
+    private async toggleZoom (): Promise<void> {
+        if (!this.controller) return
+        await this.controller.zoomPane(this.paneId)
     }
 
     private async splitPane (direction: 'right' | 'down' | 'left' | 'up'): Promise<void> {

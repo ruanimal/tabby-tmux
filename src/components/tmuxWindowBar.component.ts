@@ -183,6 +183,11 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
                 case 'initialized':
                     this.refreshWindows()
                     break
+                case 'layout-change':
+                    // Layout changes may affect pane count display
+                    // (e.g. zoom shows fewer panes in layout, but real count is unchanged)
+                    this.refreshWindows()
+                    break
             }
         })
     }
