@@ -4,6 +4,7 @@ import { SplitTabComponent, SplitContainer, LogService, Logger, TabsService, Hot
 import { TabRecoveryService } from 'tabby-core'
 import { TmuxController } from '../session'
 import { TmuxService } from '../services/tmux.service'
+import { TMUX_COMMAND_TOLERATE_ERRORS } from '../gateway'
 import { TmuxPaneTabComponent } from './tmuxPaneTab.component'
 import { parseTmuxLayout, TmuxLayoutNode, flattenLayout } from '../layoutParser'
 
@@ -196,10 +197,16 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         requestAnimationFrame(async () => {
             this._initialized = true
 
-            // ── Step A: Push client size FIRST ──
-            // tmux may start with stale client size from the previous attach.
-            // Tell tmux our actual size before discovering panes, so the
-            // layout-change events carry coordinates matching our window.
+            // ── Step A: Disable tmux pane borders + push client size FIRST ──
+            // tmux draws box-drawing characters in pane borders by default.
+            // We draw our own CSS dividers instead, so disable tmux's borders
+            // to avoid double-rendering (the border chars would show through
+            // our transparent divider elements).
+            // Then push client size so tmux relays out without border space.
+            this.controller!.gateway.sendCommand(
+                'set-option -gw pane-border-lines off',
+                TMUX_COMMAND_TOLERATE_ERRORS,
+            ).catch(() => { /* older tmux may not support this option */ })
             this.refreshClientSize()
             await this.eventQueue
 
