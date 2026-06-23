@@ -260,9 +260,18 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     }
 
     protected override async handleRightMouseDown (event: MouseEvent): Promise<void> {
-        event.preventDefault()
-        event.stopPropagation()
-        this.platform.popupContextMenu(await this.buildContextMenu(), event)
+        // Only hijack right-click for the tmux pane menu when the user actually
+        // wants a menu. Otherwise defer to the base handler so that the
+        // configured `terminal.rightClick` behaviour (paste / clipboard) works.
+        // In paste/clipboard mode the base handleRightMouseUp still opens this
+        // pane's context menu on a long press, so the tmux menu stays reachable.
+        if (this.config.store.terminal.rightClick === 'menu') {
+            event.preventDefault()
+            event.stopPropagation()
+            this.platform.popupContextMenu(await this.buildContextMenu(), event)
+        } else {
+            await super.handleRightMouseDown(event)
+        }
     }
 
     /** Whether this pane is currently zoomed (fills the entire window). */
