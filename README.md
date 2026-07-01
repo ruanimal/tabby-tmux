@@ -37,17 +37,22 @@ npm install tabby-tmux
 3. The bottom window bar appears — switch between tmux windows and panes from there
 4. Right-click → **Exit Tmux Mode** to detach
 
-### Development
+## Configuration
 
-```bash
-pnpm install
-pnpm run watch  # watch mode
+### Right-click behavior
 
-# Launch Tabby with the plugin loaded
-TABBY_PLUGINS=$(pwd) tabby --debug
-```
+By default, right-clicking inside a tmux pane opens the **tmux pane context menu** (used for actions like *Enter/Exit Tmux Mode*, *New Window*, etc.), regardless of the *Settings → Terminal → "On right-click"* option.
 
-## trzsz Support
+If you set **"On right-click"** to `Paste` or `Clipboard` in Tabby settings, this plugin will respect that choice:
+
+- **Quick right-click** → performs the configured action (paste from clipboard / copy selection)
+- **Long press (≥ 250 ms)** → still opens the tmux pane context menu, so all tmux features remain accessible
+
+> **Tip:** If the tmux menu feels hard to reach after changing the setting, hold the right mouse button down for a moment before releasing.
+
+## Compatibility
+
+### trzsz
 
 This plugin is fully compatible with the [tabby-trzsz](https://github.com/trzsz/tabby-trzsz) plugin, enabling file transfer (`trz`/`tsz`) and drag-and-drop upload over tmux panes.
 
@@ -59,6 +64,16 @@ npm install tabby-tmux tabby-trzsz
 ```
 
 > **Note:** When uploading files over WebSocket terminals (e.g. via [tabby-ws-term](https://github.com/ruanimal/tabby-ws-term)), use `trzsz -B 10K` to improve compatibility.
+
+## Development
+
+```bash
+pnpm install
+pnpm run watch  # watch mode
+
+# Launch Tabby with the plugin loaded
+TABBY_PLUGINS=$(pwd) tabby --debug
+```
 
 ## License
 

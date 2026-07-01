@@ -37,17 +37,22 @@ npm install tabby-tmux
 3. 底部出现 tmux window 栏，可切换 window 和 pane
 4. 右键 → **Exit Tmux Mode** 退出 tmux 模式
 
-### 开发调试
+## 配置
 
-```bash
-pnpm install
-pnpm run watch  # 监听模式
+### 右键行为
 
-# 启动 Tabby 并加载插件
-TABBY_PLUGINS=$(pwd) tabby --debug
-```
+默认情况下，在 tmux pane 内右键会直接弹出 **tmux pane 上下文菜单**（用于 *Enter/Exit Tmux Mode*、*New Window* 等操作），而**不会**遵循 Tabby 的 *Settings → Terminal → "On right-click"* 设置。
 
-## trzsz 支持
+如果你在 Tabby 设置中将 **"On right-click"** 改为 `Paste` 或 `Clipboard`，本插件会尊重该选择：
+
+- **短按右键** → 执行设置中的操作（粘贴剪贴板内容 / 复制选中内容）
+- **长按右键（≥ 250 毫秒）** → 仍会弹出 tmux pane 上下文菜单，所有 tmux 功能依然可用
+
+> **提示：** 修改设置后如果觉得 tmux 菜单不好调出，可以按住右键稍等片刻再松开，即可触发菜单。
+
+## 兼容性
+
+### trzsz
 
 本插件与 [tabby-trzsz](https://github.com/trzsz/tabby-trzsz) 插件完全兼容，可在 tmux pane 中使用文件传输（`trz`/`tsz`）和拖拽上传。
 
@@ -59,6 +64,16 @@ npm install tabby-tmux tabby-trzsz
 ```
 
 > **提示：** 通过 WebSocket 终端上传文件时（如使用 [tabby-ws-term](https://github.com/ruanimal/tabby-ws-term)），建议使用 `trzsz -B 10K` 以提高兼容性。
+
+## 开发调试
+
+```bash
+pnpm install
+pnpm run watch  # 监听模式
+
+# 启动 Tabby 并加载插件
+TABBY_PLUGINS=$(pwd) tabby --debug
+```
 
 ## License
 
