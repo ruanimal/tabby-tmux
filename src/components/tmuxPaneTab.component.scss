@@ -19,7 +19,10 @@
 :host ::ng-deep .xterm {
     overflow: hidden !important;
 }
-/* xterm 6 renders its interactive scrollbar separately from this legacy viewport */
+/* Only valid for @xterm/xterm 6+ (interactive scrollbar is a separate DOM
+ * element, `.xterm-scrollable-element > .scrollbar`, not the viewport's).
+ * When upgrading xterm, re-verify the scrollbar is still xterm-drawn,
+ * otherwise `overflow-y: hidden` silently disables scrollbar interaction. */
 :host ::ng-deep .xterm-viewport {
     overflow-y: hidden !important;
 }

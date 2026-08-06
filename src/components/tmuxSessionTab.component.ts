@@ -540,9 +540,14 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      *
      * SplitTabComponent normally does this from layoutInternal(), but tmux
      * panes use a custom pixel layout and override layout() with a no-op.
+     *
+     * Intentionally does not replicate the upstream `_allFocusMode` branch
+     * (all panes get the `focused` class in fullscreen focus mode): this
+     * component overrides focus()/layout() and `_allFocusMode` is never
+     * activated in this integration.
      */
     private updatePaneFocusClasses(): void {
-        const focusedTab = (this as any).focusedTab as TmuxPaneTabComponent | null
+        const focusedTab = this.getFocusedTab() as TmuxPaneTabComponent | null
         const viewRefs = (this as any).viewRefs as Map<
             TmuxPaneTabComponent,
             { rootNodes: Node[] }
@@ -556,7 +561,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
     /** Ensure the custom layout always has one visible focused pane. */
     private ensureVisiblePaneFocused(paneTabs: TmuxPaneTabComponent[]): void {
-        const focusedTab = (this as any).focusedTab as TmuxPaneTabComponent | null
+        const focusedTab = this.getFocusedTab() as TmuxPaneTabComponent | null
         if (!focusedTab || !paneTabs.includes(focusedTab)) {
             const firstPane = paneTabs[0]
             if (firstPane) {
