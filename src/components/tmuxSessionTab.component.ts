@@ -532,6 +532,45 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 t._tmuxActive = (t === tab)
             }
         }
+        this.updatePaneFocusClasses()
+    }
+
+    /**
+     * Keep the DOM focus marker in sync with focusedTab.
+     *
+     * SplitTabComponent normally does this from layoutInternal(), but tmux
+     * panes use a custom pixel layout and override layout() with a no-op.
+     *
+     * Intentionally does not replicate the upstream `_allFocusMode` branch
+     * (all panes get the `focused` class in fullscreen focus mode): this
+     * component overrides focus()/layout() and `_allFocusMode` is never
+     * activated in this integration.
+     */
+    private updatePaneFocusClasses(): void {
+        const focusedTab = this.getFocusedTab() as TmuxPaneTabComponent | null
+        const viewRefs = (this as any).viewRefs as Map<
+            TmuxPaneTabComponent,
+            { rootNodes: Node[] }
+        > | undefined
+
+        for (const [paneTab, viewRef] of viewRefs ?? []) {
+            const element = viewRef.rootNodes[0] as HTMLElement | undefined
+            element?.classList.toggle('focused', paneTab === focusedTab)
+        }
+    }
+
+    /** Ensure the custom layout always has one visible focused pane. */
+    private ensureVisiblePaneFocused(paneTabs: TmuxPaneTabComponent[]): void {
+        const focusedTab = this.getFocusedTab() as TmuxPaneTabComponent | null
+        if (!focusedTab || !paneTabs.includes(focusedTab)) {
+            const firstPane = paneTabs[0]
+            if (firstPane) {
+                this.focus(firstPane)
+            }
+            return
+        }
+
+        this.updatePaneFocusClasses()
     }
 
     /**
@@ -880,11 +919,17 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * Also sets the xterm character grid for each pane. One pass, zero rounding.
      */
     private applyPixelLayout(layoutTree: TmuxLayoutNode): void {
-        const cell = this.getCellSize()
-        if (!cell) return
-
         const paneMap = this.windowPaneTabs.get(this.activeWindowId!)
         if (!paneMap) return
+
+        const panes = flattenLayout(layoutTree)
+        const visiblePaneTabs = panes
+            .map(pane => paneMap.get(pane.paneId))
+            .filter((paneTab): paneTab is TmuxPaneTabComponent => paneTab !== undefined)
+        this.ensureVisiblePaneFocused(visiblePaneTabs)
+
+        const cell = this.getCellSize()
+        if (!cell) return
 
         // Read pane-area padding so absolute-positioned panes respect it.
         // CSS absolute positioning ignores parent padding, so we offset manually.
@@ -893,7 +938,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         const padL = paneArea ? parseFloat(getComputedStyle(paneArea).paddingLeft) || 0 : 0
         const padT = paneArea ? parseFloat(getComputedStyle(paneArea).paddingTop) || 0 : 0
 
-        for (const pane of flattenLayout(layoutTree)) {
+        for (const pane of panes) {
             const paneTab = paneMap.get(pane.paneId) as any
             if (!paneTab) continue
 

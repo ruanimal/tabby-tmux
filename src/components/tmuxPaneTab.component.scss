@@ -5,9 +5,8 @@
  * cols × cell pixels via pixel-absolute positioning.  No padding,
  * no border, no margin — the xterm canvas fills 100 % of the box.
  *
- * The scrollbar uses overlay mode so it floats above the content
- * without consuming layout space, keeping the container width
- * exactly cols × cellWidth.
+ * xterm owns the overlay scrollbar so it remains interactive without
+ * consuming layout space.  The legacy viewport must stay hidden.
  */
 :host > .content {
     margin: 0;
@@ -20,15 +19,10 @@
 :host ::ng-deep .xterm {
     overflow: hidden !important;
 }
-/* Overlay scrollbar — floats above content, no layout space consumed */
+/* Only valid for @xterm/xterm 6+ (interactive scrollbar is a separate DOM
+ * element, `.xterm-scrollable-element > .scrollbar`, not the viewport's).
+ * When upgrading xterm, re-verify the scrollbar is still xterm-drawn,
+ * otherwise `overflow-y: hidden` silently disables scrollbar interaction. */
 :host ::ng-deep .xterm-viewport {
-    overflow-y: overlay !important;
-    scrollbar-width: thin;
-}
-:host ::ng-deep .xterm-viewport::-webkit-scrollbar {
-    width: 6px;
-}
-:host ::ng-deep .xterm-viewport::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.2);
-    border-radius: 3px;
+    overflow-y: hidden !important;
 }
