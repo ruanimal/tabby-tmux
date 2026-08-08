@@ -5,8 +5,16 @@
  * cols × cell pixels via pixel-absolute positioning.  No padding,
  * no border, no margin — the xterm canvas fills 100 % of the box.
  *
- * xterm owns the overlay scrollbar so it remains interactive without
- * consuming layout space.  The legacy viewport must stay hidden.
+ * Scrolling model:
+ *  - @xterm/xterm 5.4 (current host): `.xterm-viewport` is the native
+ *    scroll container.  Its native scrollbar is hidden (it would consume
+ *    layout width and misalign the pixel grid); a custom overlay scrollbar
+ *    (.tmux-pane-scrollbar) is rendered on top of the pane instead and
+ *    driven by TmuxPaneTabComponent.setupScrollbar().
+ *  - @xterm/xterm 6+: the scrollbar is a separate DOM element
+ *    (`.xterm-scrollable-element > .scrollbar`) that is already overlay /
+ *    layout-neutral; the rules below do not affect it, and setupScrollbar()
+ *    detects that structure and skips the custom bar.
  */
 :host > .content {
     margin: 0;
@@ -19,10 +27,56 @@
 :host ::ng-deep .xterm {
     overflow: hidden !important;
 }
-/* Only valid for @xterm/xterm 6+ (interactive scrollbar is a separate DOM
- * element, `.xterm-scrollable-element > .scrollbar`, not the viewport's).
- * When upgrading xterm, re-verify the scrollbar is still xterm-drawn,
- * otherwise `overflow-y: hidden` silently disables scrollbar interaction. */
+/* xterm 5.4: `.xterm-viewport` is the native scroll container. Keep it
+ * scrollable (so the pane history restored into the xterm buffer can be
+ * scrolled) but hide its native scrollbar — a layout-consuming scrollbar
+ * would shrink the canvas and break the tmux-exact pixel grid. The custom
+ * overlay scrollbar (.tmux-pane-scrollbar) replaces it. */
 :host ::ng-deep .xterm-viewport {
-    overflow-y: hidden !important;
+    overflow-y: auto !important;
+    scrollbar-width: none;               /* Firefox */
+}
+:host ::ng-deep .xterm-viewport::-webkit-scrollbar {
+    display: none;                       /* Chromium / Electron */
+}
+
+/* Custom overlay scrollbar — absolutely positioned over the right edge of
+ * the pane, consumes no layout space (the pixel grid stays tmux-exact).
+ * Created by TmuxPaneTabComponent.setupScrollbar() only when the host uses
+ * the xterm 5.4 native-viewport scroll model (skipped on xterm 6+).
+ *
+ * NOTE: ::ng-deep is REQUIRED — the elements are created dynamically via
+ * document.createElement(), so they carry no Angular _ngcontent attribute
+ * and emulated-encapsulation styles would never match them.
+ *
+ * Hidden (opacity 0, pointer-events none) by default so it never intercepts
+ * terminal mouse interaction; becomes visible on scroll activity or hover.
+ * `visible` class is toggled from the component. */
+:host ::ng-deep .tmux-pane-scrollbar {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 8px;
+    z-index: 6;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+}
+:host ::ng-deep .tmux-pane-scrollbar.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Thumb — position/height are driven from the component in px. */
+:host ::ng-deep .tmux-pane-scrollbar-thumb {
+    position: absolute;
+    right: 1px;
+    width: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.25);
+    transition: background 0.15s;
+}
+:host ::ng-deep .tmux-pane-scrollbar.visible .tmux-pane-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.45);
 }

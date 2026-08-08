@@ -1,4 +1,4 @@
-import { Component, Injector, Input, OnInit } from '@angular/core'
+import { Component, ElementRef, Injector, Input, OnInit } from '@angular/core'
 import { first } from 'rxjs'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { MenuItemOptions } from 'tabby-core'
@@ -40,8 +40,22 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     /** Whether the xterm frontend has been attached and is ready. */
     private _frontendReady = false
 
+    // --- Custom overlay scrollbar (xterm 5.4 native-viewport scroll model) ---
+    /** Pane host element — the pixel-positioned container (applyPixelLayout). */
+    private _paneHost: HTMLElement
+    private _scrollbarTrack: HTMLElement | null = null
+    private _scrollbarThumb: HTMLElement | null = null
+    /** The native scroll container (.xterm-viewport); null when not applicable. */
+    private _scrollbarViewport: HTMLElement | null = null
+    private _scrollbarResizeObserver: ResizeObserver | null = null
+    private _scrollbarHideTimer: ReturnType<typeof setTimeout> | null = null
+    private _scrollbarDragging = false
+
     constructor(injector: Injector) {
         super(injector)
+        // The host element is the pane container positioned by
+        // TmuxSessionTabComponent.applyPixelLayout().
+        this._paneHost = injector.get(ElementRef<HTMLElement>).nativeElement
     }
 
     ngOnInit(): void {
@@ -111,6 +125,12 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
             if (this._tmuxCols > 0 && this._tmuxRows > 0) {
                 setTimeout(() => this.applyTmuxGrid(), 0)
             }
+            // Set up the custom overlay scrollbar once the xterm DOM is
+            // attached (frontendReady$ fires after frontend.attach()). On
+            // xterm 6+ hosts setupScrollbar() detects the virtual-scroll
+            // model and skips the custom bar, leaving the built-in overlay
+            // scrollbar in charge.
+            setTimeout(() => this.setupScrollbar(), 0)
         })
     }
 
@@ -146,6 +166,205 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         if (session?.pendingAltRestore && this.controller) {
             this.controller.reapplyAltContent(session)
         }
+
+        // Grid change alters the scroll metrics — refresh the scrollbar thumb.
+        this.updateScrollbarThumb()
+    }
+
+    /**
+     * Create the custom overlay scrollbar for this pane.
+     *
+     * Only applies to the xterm 5.4 native-viewport scroll model, where
+     * `.xterm-viewport` is the scroll container and its native scrollbar was
+     * hidden by CSS. On xterm 6+ hosts the scrollbar is a separate DOM element
+     * (`.xterm-scrollable-element > .scrollbar`) that is already overlay and
+     * layout-neutral — that structure is detected and the custom bar is
+     * skipped so it never duplicates the built-in one.
+     */
+    private setupScrollbar(): void {
+        if (this._scrollbarTrack) return
+
+        // xterm 6+ virtual-scroll model: the built-in overlay scrollbar
+        // exists, no custom bar needed.
+        if (this._paneHost.querySelector('.xterm-scrollable-element')) {
+            this.logger.info(`Pane %${this.paneId}: xterm 6+ scroll model, using built-in scrollbar`)
+            return
+        }
+
+        // NOTE: no isConnected check here — this runs right after
+        // frontendReady$, which may fire before the pane's view is mounted
+        // into the DOM. Appending to a detached host is fine; the scrollbar
+        // becomes visible once the host is attached, and scroll /
+        // ResizeObserver events keep the thumb in sync afterwards.
+        const viewport = this._paneHost.querySelector<HTMLElement>('.xterm-viewport')
+        if (!viewport) {
+            this.logger.info(`Pane %${this.paneId}: no .xterm-viewport found, skipping custom scrollbar`)
+            return
+        }
+        this._scrollbarViewport = viewport
+
+        // Build track + thumb; the thumb position/size is driven in JS.
+        const track = document.createElement('div')
+        track.className = 'tmux-pane-scrollbar'
+        const thumb = document.createElement('div')
+        thumb.className = 'tmux-pane-scrollbar-thumb'
+        track.appendChild(thumb)
+        this._paneHost.appendChild(track)
+        this._scrollbarTrack = track
+        this._scrollbarThumb = thumb
+
+        // Keep the thumb in sync with viewport scrolling (wheel, keyboard,
+        // drag, programmatic scrollTop changes).
+        this.addEventListenerUntilDestroyed(viewport, 'scroll', () => {
+            this.updateScrollbarThumb()
+            this.showScrollbarTemporarily()
+        })
+
+        // History growth / grid resize change the content height → re-measure.
+        // Observe both the screen (content height) and the viewport (its own
+        // height affects the thumb ratio).
+        const screen = viewport.querySelector<HTMLElement>('.xterm-screen') ?? viewport
+        this._scrollbarResizeObserver = new ResizeObserver(() => this.updateScrollbarThumb())
+        this._scrollbarResizeObserver.observe(screen)
+        this._scrollbarResizeObserver.observe(viewport)
+
+        // Interactions: click on the track jumps; drag on the thumb scrolls.
+        this.addEventListenerUntilDestroyed(track, 'mousedown', (e: MouseEvent) => this.onScrollbarTrackMouseDown(e))
+        this.addEventListenerUntilDestroyed(thumb, 'mousedown', (e: MouseEvent) => this.startScrollbarDrag(e))
+        this.addEventListenerUntilDestroyed(track, 'mouseenter', () => {
+            this.clearScrollbarHideTimer()
+            track.classList.add('visible')
+        })
+        this.addEventListenerUntilDestroyed(track, 'mouseleave', () => {
+            if (!this._scrollbarDragging) {
+                this.scheduleScrollbarHide()
+            }
+        })
+
+        this.logger.info(`Pane %${this.paneId}: custom overlay scrollbar created`)
+        this.updateScrollbarThumb()
+    }
+
+    /**
+     * Recompute the thumb position/size from the viewport's scroll metrics.
+     * Hides the bar entirely when there is nothing to scroll.
+     */
+    private updateScrollbarThumb(): void {
+        const viewport = this._scrollbarViewport
+        const track = this._scrollbarTrack
+        const thumb = this._scrollbarThumb
+        if (!viewport || !track || !thumb) return
+
+        const { scrollTop, scrollHeight, clientHeight } = viewport
+        if (scrollHeight <= clientHeight) {
+            // Nothing to scroll — keep the bar hidden.
+            thumb.style.display = 'none'
+            track.classList.remove('visible')
+            return
+        }
+        thumb.style.display = 'block'
+
+        const trackHeight = track.clientHeight
+        if (trackHeight <= 0) return
+        const thumbHeight = Math.max(24, trackHeight * (clientHeight / scrollHeight))
+        thumb.style.height = `${thumbHeight}px`
+
+        const maxScroll = scrollHeight - clientHeight
+        const maxTrack = trackHeight - thumbHeight
+        const thumbTop = maxScroll > 0 ? (scrollTop / maxScroll) * maxTrack : 0
+        thumb.style.top = `${thumbTop}px`
+    }
+
+    /** Show the scrollbar and auto-hide it shortly after scrolling stops. */
+    private showScrollbarTemporarily(): void {
+        this._scrollbarTrack?.classList.add('visible')
+        this.scheduleScrollbarHide()
+    }
+
+    private scheduleScrollbarHide(): void {
+        this.clearScrollbarHideTimer()
+        this._scrollbarHideTimer = setTimeout(() => this.hideScrollbar(), 600)
+    }
+
+    private clearScrollbarHideTimer(): void {
+        if (this._scrollbarHideTimer !== null) {
+            clearTimeout(this._scrollbarHideTimer)
+            this._scrollbarHideTimer = null
+        }
+    }
+
+    private hideScrollbar(): void {
+        if (this._scrollbarDragging) return
+        this._scrollbarTrack?.classList.remove('visible')
+    }
+
+    /**
+     * Click on the scrollbar track (outside the thumb) jumps to that position.
+     */
+    private onScrollbarTrackMouseDown(event: MouseEvent): void {
+        if (event.button !== 0) return
+        const viewport = this._scrollbarViewport
+        const track = this._scrollbarTrack
+        if (!viewport || !track) return
+        event.preventDefault()
+        const rect = track.getBoundingClientRect()
+        if (rect.height <= 0) return
+        const ratio = (event.clientY - rect.top) / rect.height
+        viewport.scrollTop = ratio * (viewport.scrollHeight - viewport.clientHeight)
+        this.showScrollbarTemporarily()
+    }
+
+    /**
+     * Drag the thumb to scroll the viewport.
+     *
+     * Document-level listeners are registered manually and removed in onUp.
+     * If the pane is destroyed mid-drag the closures only touch detached DOM
+     * elements (no-ops), so no leak or crash; a mouseup always follows.
+     */
+    private startScrollbarDrag(event: MouseEvent): void {
+        if (event.button !== 0) return
+        const viewport = this._scrollbarViewport
+        const track = this._scrollbarTrack
+        const thumb = this._scrollbarThumb
+        if (!viewport || !track || !thumb) return
+        event.preventDefault()
+        event.stopPropagation()
+        this._scrollbarDragging = true
+        track.classList.add('visible')
+
+        const startY = event.clientY
+        const startScrollTop = viewport.scrollTop
+        const maxScroll = viewport.scrollHeight - viewport.clientHeight
+
+        const onMove = (ev: MouseEvent): void => {
+            const trackHeight = track.clientHeight
+            const thumbHeight = thumb.clientHeight
+            const usable = trackHeight - thumbHeight
+            if (usable <= 0) return
+            const ratio = (ev.clientY - startY) / usable
+            viewport.scrollTop = Math.max(0, Math.min(maxScroll, startScrollTop + ratio * maxScroll))
+            this.showScrollbarTemporarily()
+        }
+        const onUp = (): void => {
+            this._scrollbarDragging = false
+            document.removeEventListener('mousemove', onMove)
+            document.removeEventListener('mouseup', onUp)
+            this.scheduleScrollbarHide()
+        }
+
+        document.addEventListener('mousemove', onMove)
+        document.addEventListener('mouseup', onUp)
+    }
+
+    override ngOnDestroy (): void {
+        this.clearScrollbarHideTimer()
+        this._scrollbarResizeObserver?.disconnect()
+        this._scrollbarResizeObserver = null
+        this._scrollbarTrack?.remove()
+        this._scrollbarTrack = null
+        this._scrollbarThumb = null
+        this._scrollbarViewport = null
+        super.ngOnDestroy()
     }
 
     async initializeSession(): Promise<void> {
