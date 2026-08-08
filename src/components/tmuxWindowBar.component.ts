@@ -48,8 +48,8 @@ interface WindowInfo {
             align-items: center;
             justify-content: space-between;
             padding: 2px 8px;
-            background: rgba(30, 30, 30, 0.95);
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            background: var(--theme-bg-more-2, rgba(30, 30, 30, 0.95));
+            border-top: 1px solid var(--theme-bg-less-2, rgba(255, 255, 255, 0.1));
             min-height: 28px;
             overflow-x: auto;
         }
@@ -70,20 +70,20 @@ interface WindowInfo {
             border: 1px solid transparent;
             border-radius: 3px;
             background: transparent;
-            color: #999;
+            color: var(--theme-fg-more-2, #999);
             font-size: 0.82em;
             cursor: pointer;
             white-space: nowrap;
             transition: background 0.15s, color 0.15s, border-color 0.15s;
         }
         .window-tab:hover {
-            background: rgba(255, 255, 255, 0.08);
-            color: #ccc;
+            background: var(--theme-bg-less-2, rgba(255, 255, 255, 0.08));
+            color: var(--theme-fg-more, #ccc);
         }
         .window-tab.active {
-            background: rgba(255, 255, 255, 0.12);
-            color: #fff;
-            border-color: rgba(255, 255, 255, 0.15);
+            background: var(--body-bg, rgba(255, 255, 255, 0.12));
+            color: var(--theme-fg, #fff);
+            border-color: var(--theme-fg-more-2, rgba(255, 255, 255, 0.15));
         }
         .pane-badge {
             display: inline-flex;
@@ -93,9 +93,9 @@ interface WindowInfo {
             height: 16px;
             padding: 0 3px;
             border-radius: 8px;
-            background: rgba(255, 255, 255, 0.1);
+            background: var(--theme-bg-less-2, rgba(255, 255, 255, 0.1));
             font-size: 0.85em;
-            color: #aaa;
+            color: var(--theme-fg-more, #aaa);
         }
         .window-close {
             display: inline-flex;
@@ -113,18 +113,18 @@ interface WindowInfo {
         }
         .window-tab:hover .window-close {
             visibility: visible;
-            color: #888;
+            color: var(--theme-fg-more-2, #888);
         }
         .window-close:hover {
-            background: rgba(255, 80, 80, 0.3);
-            color: #f66;
+            background: color-mix(in srgb, var(--theme-danger, #f66) 30%, transparent);
+            color: var(--theme-danger, #f66);
         }
         .add-btn {
-            color: #666;
+            color: var(--theme-fg-more-2, #666);
             padding: 0 6px;
         }
         .add-btn:hover {
-            color: #aaa;
+            color: var(--theme-fg-more, #aaa);
         }
         .bar-actions {
             display: flex;
@@ -141,13 +141,13 @@ interface WindowInfo {
             border: none;
             border-radius: 3px;
             background: transparent;
-            color: #888;
+            color: var(--theme-fg-more-2, #888);
             font-size: 0.8em;
             cursor: pointer;
         }
         .bar-btn:hover {
-            background: rgba(255, 255, 255, 0.1);
-            color: #ccc;
+            background: var(--theme-bg-less-2, rgba(255, 255, 255, 0.1));
+            color: var(--theme-fg-more, #ccc);
         }
     `]
 })
