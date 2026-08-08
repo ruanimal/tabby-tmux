@@ -578,6 +578,18 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * removeTab() which would trigger self-destruction when root empties.
      */
     private detachPaneView(tab: any): void {
+        // A pane detached from the view (window switch / move / close) must
+        // stop being a hotkey target.  Pane tabs stay alive while detached
+        // (their session keeps running and their hotkey$ subscription stays
+        // active), so without clearing `_tmuxActive` and the focus flag a
+        // stale pane from another window would still process hotkey-triggered
+        // input (Ctrl+C, paste, ...) for its tmux pane — killing commands
+        // running in other windows.
+        if (tab instanceof TmuxPaneTabComponent) {
+            tab._tmuxActive = false
+        }
+        ;(tab as any).emitBlurred()
+
         // Remove from root tree structure
         const parent = this.getParentOf(tab)
         if (parent) {
