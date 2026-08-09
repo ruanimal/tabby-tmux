@@ -15,6 +15,8 @@
 - **底部窗口栏** — 可折叠的 tmux window 切换栏，支持新建 window、断开连接
 - **布局同步** — 自动同步 tmux layout 到 Tabby SplitTab
 
+![tmux-pane](./doc/img/pane.png)
+
 ## 安装
 
 ### 通过 Tabby 设置界面

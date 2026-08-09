@@ -15,6 +15,8 @@ A [Tabby](https://tabby.sh/) plugin that provides tmux Control Mode integration,
 - **Window bar** — Collapsible bottom bar for switching tmux windows, with support for creating new windows and disconnecting
 - **Layout sync** — Automatically syncs tmux layout into Tabby SplitTab
 
+![tmux-pane](./doc/img/pane.png)
+
 ## Installation
 
 ### Via Tabby Settings
