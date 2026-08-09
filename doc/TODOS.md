@@ -7,3 +7,7 @@
 - [x] pane 关闭后光标焦点的处理, 应该是激活相邻的 pane 吧
 - [x] window 关闭时, 也应该激活相邻的 window 吧, 参考浏览器 tab, 或者 tmux 的默认逻辑
 - [x] 最大化 pane 的处理
+- [ ] zoom pane 的交互可能需要优化，没法分辨当前是否是 zoom 状态
+- [ ] tmux会话恢复的布局还是有点问题: 内容还是有些错位, 估计是尺寸还是有点问题，导致 vim 的 hello 页面 会丢失
+- [ ] focus all tmux panes 的实现可以优化，区分是 current window 还是所有 window
+- [ ] 断开重新连接后没有激活正确的 pane
