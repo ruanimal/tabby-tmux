@@ -1,9 +1,4 @@
 # Tabby Tmux Integration 插件
-
-## 回复生成要求（!!重要!!）
-
-请不要将正文内容（比如结论、分析总结、代码改动说明等）放到tag中（如`<step></step>`），否则可能会导致agent崩溃
-
 ## 项目概述
 
 `tabby-tmux` 是一个为 [Tabby](https://tabby.sh/) 终端模拟器提供 tmux Control Mode 集成的插件，灵感来自 [iTerm2 tmux Integration](https://iterm2.com/documentation-tmux-integration.html)。
