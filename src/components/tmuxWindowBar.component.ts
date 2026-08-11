@@ -66,6 +66,10 @@ interface WindowInfo {
             align-items: center;
             gap: 4px;
             height: 22px;
+            /* 窗口名过短（如 "1"、"2"）时 tab 会缩得很窄，
+               导致关闭按钮紧贴名称，悬停时极易误触关闭。
+               设置最小宽度保证名称与关闭按钮之间有足够间距。 */
+            min-width: 72px;
             padding: 0 8px;
             border: 1px solid transparent;
             border-radius: 3px;
@@ -122,6 +126,8 @@ interface WindowInfo {
         .add-btn {
             color: var(--theme-fg-more-2, #666);
             padding: 0 6px;
+            /* "+" 按钮不需要最小宽度，覆盖 .window-tab 的 min-width */
+            min-width: 0;
         }
         .add-btn:hover {
             color: var(--theme-fg-more, #aaa);
