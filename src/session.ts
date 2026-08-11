@@ -240,7 +240,6 @@ export class TmuxController {
     /** Pre-loaded history from batch discovery (iTerm2-style). */
     private pendingSnapshots = new Map<number, PaneSnapshot>()
     private sessionName = ''
-    private sessionId = -1
     private attached = false
     /** Session-level active window (single value, from #{window_active} / %session-window-changed) */
     private activeWindowId: number | null = null
@@ -291,7 +290,6 @@ export class TmuxController {
         // instead of relying on delayed list-panes or passive %output discovery.
         this.gateway.sessionChanged$.subscribe(({ sessionName, sessionId }) => {
             this.sessionName = sessionName
-            this.sessionId = sessionId
             this.attached = true
             this.log.info(`Attached to session: ${sessionName} ($${sessionId})`)
             this.events.next({ type: 'session-changed', data: { sessionName, sessionId } })
@@ -740,14 +738,6 @@ export class TmuxController {
         this.pendingSnapshots.delete(paneId)
     }
 
-    getPaneSession(paneId: number): TmuxPaneSession | undefined {
-        return this.paneSessions.get(paneId)
-    }
-
-    hasPaneSession(paneId: number): boolean {
-        return this.paneSessions.has(paneId)
-    }
-
     resizePane(_paneId: number, columns: number, rows: number): void {
         // Use refresh-client -C to set client size
         // This affects all panes uniformly in non-variable-size mode
@@ -1049,37 +1039,10 @@ export class TmuxController {
         await this.gateway.sendCommand(`kill-window -t @${windowId}`, TMUX_COMMAND_TOLERATE_ERRORS)
     }
 
-    async renameWindow(windowId: number, name: string): Promise<void> {
-        await this.gateway.sendCommand(
-            `rename-window -t @${windowId} "${name.replace(/"/g, '\\"')}"`,
-            TMUX_COMMAND_TOLERATE_ERRORS
-        )
-    }
-
     // --- Session Operations ---
 
     async detach(): Promise<void> {
         this.gateway.detach()
-    }
-
-    async listSessions(): Promise<Array<{ id: number; name: string }>> {
-        try {
-            const result = await this.gateway.sendCommand('list-sessions -F "#{session_id} #{session_name}"')
-            const sessions: Array<{ id: number; name: string }> = []
-            for (const line of result.split('\n')) {
-                const match = line.match(/^\$(\d+) (.+)$/)
-                if (match) {
-                    sessions.push({
-                        id: parseInt(match[1]),
-                        name: match[2]
-                    })
-                }
-            }
-            return sessions
-        } catch (e) {
-            this.logger.warn('Failed to list sessions:', e)
-            return []
-        }
     }
 
     // --- Lifecycle ---
@@ -1101,10 +1064,6 @@ export class TmuxController {
 
     getSessionName(): string {
         return this.sessionName
-    }
-
-    getSessionId(): number {
-        return this.sessionId
     }
 
     getWindowState(windowId: number): WindowState | undefined {
@@ -1149,6 +1108,3 @@ export class TmuxController {
         return Array.from(this.knownPanes)
     }
 }
-
-// Re-export for backwards compatibility
-export { TmuxController as TmuxControllerSession }

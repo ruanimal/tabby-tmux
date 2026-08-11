@@ -4,7 +4,6 @@ import { createConditionalLogger, ConditionalLogger } from './logHelper'
 
 // Command flags
 export const TMUX_COMMAND_TOLERATE_ERRORS = 1 << 0
-export const TMUX_COMMAND_WANTS_DATA = 1 << 1
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000
 const DEFAULT_SEND_KEYS_CHUNK_SIZE = 200
 
@@ -15,18 +14,6 @@ interface PendingCommand {
     reject: (error: Error) => void
     flags: number
     timestamp: number
-}
-
-export interface TmuxGatewayDelegate {
-    tmuxReadTask(data: Buffer, paneId: number, latency?: number): void
-    tmuxWindowAddedWithId(windowId: number): void
-    tmuxWindowClosedWithId(windowId: number): void
-    tmuxWindowRenamedWithId(windowId: number, name: string): void
-    tmuxSessionChanged(sessionName: string, sessionId: number): void
-    tmuxSessionsChanged(): void
-    tmuxLayoutChange(windowId: number, layout: string, visibleLayout?: string, zoomed?: boolean): void
-    tmuxWriteString(data: string): void
-    tmuxHostDisconnected(): void
 }
 
 /**
@@ -53,10 +40,6 @@ export class TmuxGateway {
     private directWritesPending = 0
     /** Incomplete line buffer for byte-level DCS parsing */
     private lineBuffer = ''
-
-    public minimumServerVersion: number | null = null
-    public maximumServerVersion: number | null = null
-    public pauseModeEnabled = false
 
     // Events for notifications
     public output$ = new Subject<{ paneId: number; data: Buffer; latency?: number }>()
@@ -126,37 +109,6 @@ export class TmuxGateway {
         original.then(() => clearTimeout(timer!), () => clearTimeout(timer!))
 
         return Promise.race([original, timeout])
-    }
-
-    /**
-     * Send a list of commands atomically (separated by ;)
-     */
-    async sendCommandList(commands: Array<{ command: string; flags?: number }>): Promise<string[]> {
-        if (this.detachSent || this.disconnected || commands.length === 0) {
-            return []
-        }
-
-        const promises: Promise<string>[] = []
-        const combined = commands.map((c) => {
-            const promise = new Promise<string>((resolve, reject) => {
-                const cmd: PendingCommand = {
-                    id: this.nextCommandId++,
-                    command: c.command,
-                    resolve,
-                    reject,
-                    flags: c.flags || 0,
-                    timestamp: Date.now()
-                }
-                this.commandQueue.push(cmd)
-            })
-            promises.push(promise)
-            return c.command
-        }).join('; ')
-
-        this.write(combined + '\r')
-        this.log.debug(`Sent command list: ${combined}`)
-
-        return Promise.all(promises)
     }
 
     /**
@@ -534,10 +486,4 @@ export class TmuxGateway {
         return name.replace(/\\(.)/g, '$1')
     }
 
-    /**
-     * Check if server version is at least the given version
-     */
-    versionAtLeast(version: number): boolean {
-        return this.minimumServerVersion !== null && this.minimumServerVersion >= version
-    }
 }
