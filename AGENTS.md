@@ -1,4 +1,8 @@
 # Tabby Tmux Integration 插件
+## 要求
+- 搜索代码时使用 ripgrep
+- 修复问题时尽量从根源修复, 不要打补丁
+
 ## 项目概述
 
 `tabby-tmux` 是一个为 [Tabby](https://tabby.sh/) 终端模拟器提供 tmux Control Mode 集成的插件，灵感来自 [iTerm2 tmux Integration](https://iterm2.com/documentation-tmux-integration.html)。
