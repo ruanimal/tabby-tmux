@@ -38,7 +38,7 @@ export interface TmuxSessionProfile {
         <tmux-window-bar
             [controller]="controller"
             [activeWindowId]="activeWindowId"
-            (windowSwitch)="switchToWindow($event)"
+            (windowSwitch)="enqueueSwitchToWindow($event)"
             (windowClose)="onWindowClose($event)"
             (disconnect)="onDisconnect()"
             (createWindow)="onCreateWindow()"
@@ -220,7 +220,10 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 ? activeWindowId
                 : this.controller!.getFirstWindowId()
             if (targetWindowId !== undefined) {
-                await this.switchToWindow(targetWindowId)
+                // Route through the serial queue so this initial switch cannot
+                // interleave with queued pane/layout events.
+                this.enqueueSwitchToWindow(targetWindowId)
+                await this.eventQueue
             }
 
             // ── Step C: ResizeObserver + window resize ──
@@ -375,6 +378,22 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     }
 
     /**
+     * Queue a window switch through the serial event queue.
+     *
+     * switchToWindow is async and rebuilds the SplitContainer tree; running
+     * it outside the queue (e.g. directly from the window bar template)
+     * interleaves with queued events (layout-change → syncLayout,
+     * active-pane-changed → handleActivePaneChanged), which caused focus
+     * thrash: restores and pane-changed responses kept overwriting each
+     * other and firing select-pane repeatedly.
+     */
+    enqueueSwitchToWindow(windowId: number): void {
+        this.eventQueue = this.eventQueue
+            .then(() => this.switchToWindow(windowId))
+            .catch(err => this.logger.warn('switchToWindow failed:', err))
+    }
+
+    /**
      * Switch to a different tmux window.
      * Hides current window's panes and shows target window's panes.
      */
@@ -463,8 +482,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             ? windowState.visibleLayout
             : windowState?.layout
         const displayTree = displayLayoutStr ? parseTmuxLayout(displayLayoutStr) : null
-        const displayPaneIds = displayTree
-            ? new Set(flattenLayout(displayTree).map(p => p.paneId))
+        const displayPanes = displayTree ? flattenLayout(displayTree) : null
+        const displayPaneIds = displayPanes
+            ? new Set(displayPanes.map(p => p.paneId))
             : new Set(paneMap.keys()) // no layout → show all
 
         const paneTabs = Array.from(paneMap.values())
@@ -483,6 +503,15 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                     ;(paneTab as any).emitVisibility(false)
                 }
             }
+
+            // Restore tmux's active pane for this window (window-level state,
+            // tracked per window in the controller — see getActivePaneId).
+            // MUST run after the emitFocused() loop: each emitFocused() makes
+            // the xterm frontend grab DOM focus (frontend.focus() in
+            // BaseTerminalTabComponent), so without this the DOM focus would
+            // end up on the last pane of the loop instead of tmux's active
+            // pane — breaking keyboard input routing.
+            this.restoreActivePaneFocus(windowId, paneTabs, displayPanes)
 
             // 6. Apply pixel layout from tmux
             if (displayTree) {
@@ -521,7 +550,8 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * for frontend initialization, and we use `TmuxPaneTabComponent._tmuxActive`
      * to control which pane processes hotkeys.
      */
-    override focus(tab: any): void {
+    override focus(tab: any, syncToTmux = false): void {
+        const changed = (this as any).focusedTab !== tab
         ;(this as any).focusedTab = tab
         tab.emitFocused()
         // Mark only the focused pane as active for hotkey routing.
@@ -533,6 +563,37 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             }
         }
         this.updatePaneFocusClasses()
+
+        // Sync a USER-INITIATED focus change to tmux via select-pane, so the
+        // tmux side stays consistent regardless of tmux mouse mode. Only the
+        // user-click path (focusPaneFromUserClick) passes syncToTmux=true.
+        //
+        // Internal focus calls (restoreActivePaneFocus, handleActivePaneChanged,
+        // ensureVisiblePaneFocused, and the base class's onAfterTabAdded
+        // setImmediate focus after every addTab) must NOT send select-pane:
+        // they follow tmux state instead of leading it, and letting them send
+        // commands caused a feedback loop — select-pane → %window-pane-changed
+        // → focus() → select-pane ... thrashing the active pane.
+        //
+        // `changed` additionally breaks the loop for the one remaining path:
+        // select-pane → %window-pane-changed → handleActivePaneChanged →
+        // focus(tab) where focusedTab is already `tab`.
+        if (syncToTmux && changed && this.controller && tab instanceof TmuxPaneTabComponent) {
+            this.logger.info(`focus changed → select-pane %${tab.paneId}`)
+            this.controller.gateway.sendCommand(
+                `select-pane -t %${tab.paneId}`,
+                TMUX_COMMAND_TOLERATE_ERRORS
+            ).catch(() => { /* tmux may reject during detach */ })
+        }
+    }
+
+    /**
+     * User clicked a pane (via TmuxPaneTabComponent's host click handler).
+     * Routes through focus(_, true) so the click is synced to tmux with
+     * select-pane — independent of tmux mouse mode.
+     */
+    focusPaneFromUserClick(paneTab: TmuxPaneTabComponent): void {
+        this.focus(paneTab, true)
     }
 
     /**
@@ -574,6 +635,50 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     }
 
     /**
+     * Restore tmux's active pane for a window (window-level state, tracked
+     * per window in the controller — see TmuxController.getActivePaneId) as
+     * the UI focused pane. Falls back to the first display pane when the
+     * record is missing (e.g. active pane just closed and %window-pane-changed
+     * not yet received).
+     *
+     * MUST be called after any emitFocused() loop: each emitFocused() makes
+     * the xterm frontend grab DOM focus (frontend.focus() subscribed in
+     * BaseTerminalTabComponent), so without this the DOM focus would land on
+     * the last pane of the loop instead of tmux's active pane — keyboard
+     * input would go to the wrong pane.
+     */
+    private restoreActivePaneFocus(
+        windowId: number,
+        paneTabs: TmuxPaneTabComponent[],
+        displayPanes: Array<{ paneId: number }> | null
+    ): void {
+        // Defer to setImmediate: the base class's onAfterTabAdded() schedules
+        // `setImmediate(() => this.focus(tab))` for EVERY addTab() in the
+        // mount loop, so the last added pane grabs focusedTab after our
+        // synchronous restore below. Deferring the restore lets it run after
+        // those queued focus calls and win — without sending select-pane
+        // (focus defaults syncToTmux=false; only user clicks sync to tmux).
+        setImmediate(() => {
+            const ctrlActivePaneId = this.controller?.getActivePaneId(windowId)
+            // Fall back in tmux layout order (left-to-right, top-to-bottom),
+            // NOT paneMap insertion order — pane creation order is unrelated
+            // to visual order and picking the wrong pane caused unstable
+            // activation.
+            const activePaneTab = paneTabs.find(t => t.paneId === ctrlActivePaneId)
+                ?? (displayPanes
+                    ? displayPanes.map(p => paneTabs.find(t => t.paneId === p.paneId)).find(t => t !== undefined)
+                    : paneTabs[0])
+            this.logger.info(
+                `restoreActivePaneFocus win=@${windowId} ctrlPane=${ctrlActivePaneId} ` +
+                `target=${activePaneTab ? `%${activePaneTab.paneId}` : 'none'}`
+            )
+            if (activePaneTab) {
+                this.focus(activePaneTab as any)
+            }
+        })
+    }
+
+    /**
      * Detach a pane tab's view from the ViewContainer without calling
      * removeTab() which would trigger self-destruction when root empties.
      */
@@ -610,8 +715,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * becomes empty. In TmuxSessionTab, an empty root is normal during
      * window switches and should not destroy the session tab.
      */
-    override removeTab(tab: any): void {
-        const parent = this.getParentOf(tab)
+    override removeTab(tab: any): void {        const parent = this.getParentOf(tab)
         if (!parent) return
 
         const index = parent.children.indexOf(tab)
@@ -842,6 +946,16 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 ;(paneTab as any).emitFocused()
             }
 
+            // The emitFocused() loop above gives the xterm DOM focus to the
+            // LAST pane (frontend.focus() on every focused$ event). Restore
+            // tmux's window-level active pane so DOM focus, hotkey routing
+            // and the focused pane all agree with tmux.
+            this.restoreActivePaneFocus(
+                this.activeWindowId,
+                Array.from(paneMap.values()),
+                displayPanes
+            )
+
             // Hide panes not in the display set (e.g. non-zoomed panes)
             for (const [paneId, paneTab] of paneMap) {
                 if (!displayPaneIds.has(paneId)) {
@@ -912,6 +1026,11 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     /**
      * Handle tmux telling us the active pane changed (e.g. after pane close).
      * Focuses the pane in the UI, matching tmux default behavior.
+     *
+     * The controller records this per-window (window-level state, see
+     * TmuxController.getActivePaneId), so events for non-active windows are
+     * safe to ignore here — switchToWindow() restores that window's active
+     * pane from the controller when the user switches to it.
      */
     private handleActivePaneChanged(paneId: number, windowId: number): void {
         if (windowId !== this.activeWindowId) return
@@ -921,6 +1040,17 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
         const paneTab = paneMap.get(paneId)
         if (!paneTab) return
+
+        // Pane not mounted yet (view not attached) — skip focusing it.
+        // The controller already recorded the window-level active pane, and
+        // restoreActivePaneFocus() applies it when the pane gets mounted.
+        // Focusing an unmounted pane would set a stale focusedTab and make
+        // ensureVisiblePaneFocused fall back to an arbitrary pane, firing a
+        // spurious select-pane.
+        if (!(this as any).viewRefs?.has(paneTab)) {
+            this.logger.info(`Pane %${paneId} not mounted yet, deferring focus to restoreActivePaneFocus`)
+            return
+        }
 
         this.logger.info(`Activating pane %${paneId} in window @${windowId}`)
         this.focus(paneTab as any)
@@ -1277,7 +1407,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         if (this.controller) {
             const newWindowId = await this.controller.createWindow()
             if (newWindowId !== null) {
-                await this.switchToWindow(newWindowId)
+                this.enqueueSwitchToWindow(newWindowId)
             }
         }
     }

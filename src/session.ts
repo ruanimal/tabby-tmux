@@ -242,7 +242,15 @@ export class TmuxController {
     private sessionName = ''
     private sessionId = -1
     private attached = false
+    /** Session-level active window (single value, from #{window_active} / %session-window-changed) */
     private activeWindowId: number | null = null
+    /**
+     * Window-level active pane: each window has its own active pane.
+     * Restored from list-panes #{pane_active} on (re)connect, updated by
+     * %window-pane-changed at runtime. This is the authoritative source for
+     * which pane UI hotkeys route to after switching windows.
+     */
+    private windowActivePanes = new Map<number, number>()
 
     public gateway: TmuxGateway
     public events = new Subject<{ type: string; paneId?: number; windowId?: number; data?: any }>()
@@ -312,6 +320,7 @@ export class TmuxController {
 
         this.gateway.windowClose$.subscribe(windowId => {
             this.windowStates.delete(windowId)
+            this.windowActivePanes.delete(windowId)
             this.events.next({ type: 'window-close', windowId })
         })
 
@@ -332,6 +341,11 @@ export class TmuxController {
             const windowState = this.windowStates.get(windowId)
             if (windowState) {
                 windowState.panes.delete(paneId)
+            }
+            // If the closed pane was this window's active pane, drop the record.
+            // tmux will send %window-pane-changed shortly after to re-point it.
+            if (this.windowActivePanes.get(windowId) === paneId) {
+                this.windowActivePanes.delete(windowId)
             }
             // Clean up pane session if exists
             const session = this.paneSessions.get(paneId)
@@ -384,8 +398,11 @@ export class TmuxController {
 
         // Handle pane focus changes (e.g. after pane close, tmux auto-focuses
         // the next pane and sends %window-pane-changed).
+        // Record per-window active pane — this is window-level state, distinct
+        // from the session-level activeWindowId.
         this.gateway.paneChanged$.subscribe(({ windowId, paneId }) => {
             this.log.info(`Active pane changed to %${paneId} in window @${windowId}`)
+            this.windowActivePanes.set(windowId, paneId)
             this.events.next({ type: 'active-pane-changed', paneId, windowId })
         })
 
@@ -468,9 +485,12 @@ export class TmuxController {
                 }
             }
 
-            // Step 2: Discover all panes and map to windows
+            // Step 2: Discover all panes and map to windows.
+            // #{pane_active} restores per-window active pane state on
+            // (re)connect — this is window-level state, independent of the
+            // session-level active window.
             const paneResult = await this.gateway.sendCommand(
-                'list-panes -s -F "#{pane_id} #{window_id}"',
+                'list-panes -s -F "#{pane_id} #{window_id} #{pane_active}"',
                 TMUX_COMMAND_TOLERATE_ERRORS
             )
             const paneLines = paneResult.split(/[\r\n]+/).map(l => l.trim()).filter(l => l)
@@ -478,10 +498,13 @@ export class TmuxController {
 
             const newPaneIds: Array<{ paneId: number; windowId: number }> = []
             for (const line of paneLines) {
-                const match = line.match(/^%?(\d+)\s+@?(\d+)$/)
+                const match = line.match(/^%?(\d+)\s+@?(\d+)\s+([01])$/)
                 if (match) {
                     const paneId = parseInt(match[1])
                     const windowId = parseInt(match[2])
+                    if (match[3] === '1') {
+                        this.windowActivePanes.set(windowId, paneId)
+                    }
 
                     let windowState = this.windowStates.get(windowId)
                     if (!windowState) {
@@ -598,6 +621,10 @@ export class TmuxController {
             for (const paneId of closedPaneIds) {
                 windowState.panes.delete(paneId)
                 this.knownPanes.delete(paneId)
+                // Drop stale active-pane record (pane moved/closed)
+                if (this.windowActivePanes.get(windowId) === paneId) {
+                    this.windowActivePanes.delete(windowId)
+                }
                 // Clean up pane session
                 const session = this.paneSessions.get(paneId)
                 if (session) {
@@ -1099,6 +1126,19 @@ export class TmuxController {
      */
     getActiveWindowId(): number | null {
         return this.activeWindowId
+    }
+
+    /**
+     * Get the tmux-side active pane ID for a window, as reported by
+     * list-panes #{pane_active} or %window-pane-changed.
+     *
+     * Pane activation is window-level state (each window has its own active
+     * pane), independent of the session-level active window. Returns null
+     * when unknown (e.g. the active pane just closed and tmux has not yet
+     * sent %window-pane-changed).
+     */
+    getActivePaneId(windowId: number): number | null {
+        return this.windowActivePanes.get(windowId) ?? null
     }
 
     /**

@@ -1,4 +1,4 @@
-import { Component, ElementRef, Injector, Input, OnInit } from '@angular/core'
+import { Component, ElementRef, HostListener, Injector, Input, OnInit } from '@angular/core'
 import { first } from 'rxjs'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { MenuItemOptions } from 'tabby-core'
@@ -33,6 +33,21 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
      * Toggled via the right-click context menu.
      */
     _tmuxSyncInput = false
+
+    /**
+     * User clicked this pane. Routes to the session tab's
+     * focusPaneFromUserClick(), which focuses the pane AND syncs the change
+     * to tmux via select-pane (independent of tmux mouse mode).
+     *
+     * The base class's attachTabView() registers its own click listener that
+     * calls focus(tab) without the tmux sync — that one only updates the UI
+     * focus state, so no select-pane feedback loop can form.
+     */
+    @HostListener('click')
+    onHostClick(): void {
+        const sessionTab = this.parent as any
+        sessionTab?.focusPaneFromUserClick?.(this)
+    }
 
     /** Desired tmux grid size (chars). tmux is authoritative over the cell grid. */
     private _tmuxCols = 0
