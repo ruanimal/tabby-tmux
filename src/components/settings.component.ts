@@ -37,6 +37,12 @@ import { ConfigService } from 'tabby-core'
                         [(ngModel)]="config.store.tmuxPlugin.debugLogging"
                         (ngModelChange)="config.save()">
                 </div>
+                <div class="row">
+                    <div class="header"><div class="title">Show close button on tabs:</div></div>
+                    <input type="checkbox"
+                        [(ngModel)]="config.store.tmuxPlugin.showWindowCloseButton"
+                        (ngModelChange)="config.save()">
+                </div>
             </div>
         </div>
     `,

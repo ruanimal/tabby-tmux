@@ -9,6 +9,7 @@ export class TmuxConfigProvider extends ConfigProvider {
             sendKeysChunkSize: 200,
             resizeDebounceMs: 150,
             debugLogging: false,
+            showWindowCloseButton: true,
         },
     }
 }

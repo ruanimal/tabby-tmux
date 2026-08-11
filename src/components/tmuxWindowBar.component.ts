@@ -1,5 +1,6 @@
 import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, ChangeDetectorRef } from '@angular/core'
 import { Subscription } from 'rxjs'
+import { ConfigService } from 'tabby-core'
 import { TmuxController } from '../session'
 
 interface WindowInfo {
@@ -23,7 +24,7 @@ interface WindowInfo {
                 >
                     <span class="window-name">{{ win.name }}</span>
                     <span class="pane-badge" *ngIf="win.paneCount > 1">{{ win.paneCount }}</span>
-                    <span class="window-close" title="Close Window" (click)="onCloseWindow($event, win)">
+                    <span class="window-close" *ngIf="showCloseButton" title="Close Window" (click)="onCloseWindow($event, win)">
                         <i class="fas fa-times"></i>
                     </span>
                 </button>
@@ -170,7 +171,14 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
 
     private subscription: Subscription
 
-    constructor(private cdr: ChangeDetectorRef) {}
+    constructor(
+        private cdr: ChangeDetectorRef,
+        private configService: ConfigService,
+    ) {}
+
+    get showCloseButton (): boolean {
+        return this.configService?.store?.tmuxPlugin?.showWindowCloseButton ?? true
+    }
 
     ngOnInit(): void {
         this.refreshWindows()
