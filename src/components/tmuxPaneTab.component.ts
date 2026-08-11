@@ -168,11 +168,12 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     private applyTmuxGrid(): void {
         const xterm = (this.frontend as any)?.xterm
         if (!xterm) return
-        if (xterm.cols === this._tmuxCols && xterm.rows === this._tmuxRows) return
-        try {
-            xterm.resize(this._tmuxCols, this._tmuxRows)
-        } catch (e) {
-            this.logger.warn(`Failed to resize pane %${this.paneId} grid`, e)
+        if (xterm.cols !== this._tmuxCols || xterm.rows !== this._tmuxRows) {
+            try {
+                xterm.resize(this._tmuxCols, this._tmuxRows)
+            } catch (e) {
+                this.logger.warn(`Failed to resize pane %${this.paneId} grid`, e)
+            }
         }
 
         // xterm.resize() clears the alternate screen buffer.
@@ -184,6 +185,13 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
 
         // Grid change alters the scroll metrics — refresh the scrollbar thumb.
         this.updateScrollbarThumb()
+
+        // The pane's xterm now renders at the tmux layout column width —
+        // release the pending history restore. TmuxPaneSession.start() waits
+        // for this so history lines are written at the correct width instead
+        // of xterm's initial fit-based (fallback-font) columns, which would
+        // wrap logical lines wrongly until a manual resize reflows them.
+        session?.gridApplied?.()
     }
 
     /**

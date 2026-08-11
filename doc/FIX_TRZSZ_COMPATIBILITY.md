@@ -181,3 +181,10 @@ Saved 1 file/directory to /Users/ruan/Downloads
 
 
 
+
+## 后续更新（2026-08：re-attach 历史错位根因已修复）
+
+"重新 attach 后 pane 历史显示 trzsz 协议数据"（以及更普遍的历史错位/多行）的根因是 **capture 早于尺寸同步**：
+
+- 首次 `refresh-client -C`（正确尺寸）由 SessionTab Step A 推送，而早期 `session-changed`/`initialized` 触发的 discover 在其之前执行 → capture 基于 tmux 旧窗口尺寸 → 恢复进正确尺寸的 xterm 时错位（协议字符串随之乱排）。
+- 修复：`capturePaneSnapshots` 由 `clientSizePushed` 守卫保护（尺寸推送前跳过 + 回滚 knownPanes/windowState.panes/windowActivePanes），由 Step B 在 `refresh-client` 之后重新 discover 并捕获；`restorePaneHistory` 写入前再做折叠/裁剪/pop/gridApplied 归一化。

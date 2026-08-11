@@ -12,3 +12,8 @@
 - [ ] focus all tmux panes 的实现可以优化，区分是 current window 还是所有 window
 - [x] 断开重新连接后没有激活正确的 pane/window; 同时通过tab栏切换window时, pane 的激活状态也有问题, window 和 pane 的激活状态是否要分开维护
 - [ ] 搜索终端内容
+
+## 更新记录（2026-08）
+
+- [x] ~~re-attach 后 pane 历史显示 trzsz 协议数据 / 布局尺寸不稳定~~：attach 时序重构后已解决 —— 首次 client size 由宿主 cell 提前推送、capture 由 `clientSizePushed` 守卫保护（Step B 补捕）、历史恢复做折叠/裁剪/pop/gridApplied 归一化、新建 pane 的 `%output` 缓冲到 grid 应用后。
+- [x] ~~tmux 会话恢复的布局/内容错位（尺寸问题导致 vim hello 页丢失）~~：历史恢复列宽（gridApplied）、尺寸推送（hostCell 提前 + padding 剔除）、光标恢复（pane 实际高度 + lastNonEmpty）均已修复；vim 等 alternate screen 内容经 `pendingAltRestore` 在 resize 后重放。若仍有残余请复测并贴日志。

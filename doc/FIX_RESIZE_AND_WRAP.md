@@ -100,3 +100,13 @@ rows = floor(paneArea高 / cell高)
 | 整窗 resize | `windowDidResize` → `setClientSize` | `.pane-area` ResizeObserver → `refresh-client -C` |
 | pane 不反推尺寸 | pane 尺寸由 tmux 驱动，非本地计算 | `enableResizing=false` + `resize()` no-op |
 | 去重 | `lastSize_` | `_lastSentCols/Rows` + 150ms 防抖 |
+
+## 后续更新（2026-08：attach 时序重构）
+
+上述方案（tmux 权威 + 单一数据源）仍然成立，但 `refreshClientSize()` 的测量细节已更新：
+
+- **cell 来源**：`getCellSize()` 优先取已就绪 pane 的 xterm cell，否则回退到 attach 时捕获的**宿主终端 cell size**（`TmuxController.hostCellSize`，Enter tmux Mode 时宿主 xterm 已就绪、字体已加载）。此前读取新 pane 的 cell 可能遇到 fallback 字体测量（偏宽），导致首次 client size 推送偏小（如 129 而非 136）→ 二次重排跳动。
+- **测量**：`measureClientSize()` 从 `.pane-area` 的 `clientWidth/Height` 中**剔除 padding**（`clientWidth` 含 padding，原注释误称已排除），不再有 spanner/scrollbar 等装饰像素的估算。
+- **首次推送时机**：`refreshClientSize()` 不再因 `activeWindowId === null` 提前返回 —— 首次推送提前到 `ngAfterViewInit` Step A（`refresh-client -C` 在 discover 之前），tmux 从一开始就按正确尺寸布局，首帧不再基于 tmux 旧尺寸。
+- **切换 window 不再强制重发**：`switchToWindow` 的 rAF 不再重置 `_lastSentCols/Rows`，尺寸未变时 dedup 跳过，消除每次切换的全窗口重排。
+- 另外：discover/capture 由 `clientSizePushed` 守卫保护（尺寸推送前跳过 + 回滚，Step B 补捕），避免 capture 基于 tmux 旧尺寸。

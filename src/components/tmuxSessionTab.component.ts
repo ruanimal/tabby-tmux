@@ -524,9 +524,14 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         this.cdr.detectChanges()
 
         if (paneTabs.length > 0) {
+            // Refresh the client size after mounting panes. The dedup
+            // (_lastSentCols/Rows) is deliberately NOT reset here: the size
+            // only changes when the container actually changes (window resize),
+            // which the ResizeObserver already reports. Forcing a re-send on
+            // every window switch made tmux relayout ALL its windows each time
+            // — an unnecessary full relayout. The very first push still
+            // happens because _lastSent starts at 0.
             requestAnimationFrame(() => {
-                this._lastSentCols = 0
-                this._lastSentRows = 0
                 this.refreshClientSize()
             })
         }
@@ -1120,17 +1125,28 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * Because the result is derived from the (stable) container size, a tmux
      * relayout does not change it, so `_lastSentCols/Rows` dedup terminates the
      * loop after a single iteration.
+     *
+     * NOTE: unlike before, this does NOT bail out when activeWindowId is null.
+     * The host terminal's cell size (controller.getHostCellSize()) lets us
+     * measure the correct grid even before any pane is mounted, so the very
+     * first push happens in ngAfterViewInit Step A — BEFORE refreshPanes()
+     * discovers windows. tmux then lays out every window at the correct size
+     * from the start, instead of the first layout being based on tmux's stale
+     * pre-attach size (which caused a visible relayout flash after attach).
      */
     private refreshClientSize(): void {
         if (!this.controller || !this._initialized) return
-        if (this.activeWindowId === null) return
 
         const measured = this.measureClientSize()
         if (!measured) {
-            // Cell size not available yet (no pane frontend mounted/rendered).
-            // Retry shortly so the first real size still gets sent once a pane
-            // has rendered its character grid — but only if panes are expected.
-            const paneMap = this.windowPaneTabs.get(this.activeWindowId)
+            // measureClientSize failed — either the container is too small,
+            // or no cell size is available yet (host cell missing AND no pane
+            // frontend attached). Retry shortly so the first real size still
+            // gets sent once a pane has rendered its character grid — but
+            // only if panes are expected.
+            const paneMap = this.activeWindowId === null
+                ? undefined
+                : this.windowPaneTabs.get(this.activeWindowId)
             if (paneMap && paneMap.size > 0) {
                 this.scheduleRefreshClientSize()
             }
@@ -1144,21 +1160,43 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             this._lastSentRows = rows
             this.logger.info(`Setting tmux client size: ${cols}x${rows}`)
             this.controller.resizePane(0, cols, rows)
+            // Mark that a client size has been pushed — history capture
+            // (capture-pane) must not run before this, or it would snapshot
+            // tmux's stale pre-attach window size (see capturePaneSnapshots).
+            this.controller.setClientSizePushed()
         }
     }
 
     /**
      * Measure the whole-window character grid from the .pane-area container.
      *
-     * Pure pixel-to-cell conversion. Uses clientWidth/clientHeight to
-     * exclude padding from the measurement — pane-area padding is purely
-     * cosmetic and must not affect the tmux grid calculation.
+     * Pure pixel-to-cell conversion. clientWidth/clientHeight INCLUDE the
+     * element's padding, so the .pane-area padding (4px per side, purely
+     * cosmetic) is subtracted explicitly — see measureClientSize body.
      */
     private measureClientSize(): { cols: number; rows: number } | null {
         const host = this.hostElement.nativeElement as HTMLElement
         const paneArea = host.querySelector('.pane-area') ?? host
-        const pw = (paneArea as HTMLElement).clientWidth
-        const ph = (paneArea as HTMLElement).clientHeight
+
+        // clientWidth/clientHeight include padding, but the .pane-area padding
+        // (4px each side) is cosmetic and must not count toward the tmux grid —
+        // otherwise tmux gets ~1 extra column/row and the rightmost/bottommost
+        // pane overflows the visible area (misaligned against the bottom
+        // window bar / tab bar).
+        //
+        // The bottom window bar itself is excluded automatically: it is a flex
+        // sibling (flex: 0 0 auto) while .pane-area is flex: 1 1 0, so
+        // clientHeight already excludes it. tmux-mode scrollbars are overlay
+        // (consume no layout space), so clientWidth needs no scrollbar
+        // adjustment — unlike the host terminal, whose native scrollbar would
+        // otherwise shave columns off the grid.
+        const cs = getComputedStyle(paneArea as HTMLElement)
+        const padL = parseFloat(cs.paddingLeft) || 0
+        const padR = parseFloat(cs.paddingRight) || 0
+        const padT = parseFloat(cs.paddingTop) || 0
+        const padB = parseFloat(cs.paddingBottom) || 0
+        const pw = (paneArea as HTMLElement).clientWidth - padL - padR
+        const ph = (paneArea as HTMLElement).clientHeight - padT - padB
         if (pw < 10 || ph < 10) return null
 
         const cell = this.getCellSize()
@@ -1171,12 +1209,44 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     }
 
     /**
-     * Read the xterm character cell size (in CSS pixels) from any mounted pane.
+     * Read the xterm character cell size (in CSS pixels) used for the tmux grid.
+     *
+     * Cell source precedence:
+     * 1. The host terminal's cell size captured at attach time
+     *    (controller.getHostCellSize()). The host xterm is fully rendered when
+     *    the user enters tmux mode, so this is the REAL cell size — the pane's
+     *    early measurement can't be trusted (fallback font before its first
+     *    resize), see the body for details.
+     * 2. Any mounted pane's xterm (fallback when the host cell is missing).
+     *    All panes share the global font config, and after their first
+     *    setTmuxGrid()-driven resize they re-measure to the real font, which
+     *    equals the host cell size.
+     *
+     * Returns null only when neither source is available; callers retry.
      */
     private getCellSize(): { width: number; height: number } | null {
+        // Prefer the host terminal's cell size captured at attach time
+        // (controller.getHostCellSize()): the host is fully rendered when the
+        // user enters tmux mode, so this is measured with the REAL font.
+        //
+        // A pane's own measurement is NOT preferred, even after its xterm is
+        // _frontendReady: xterm only re-measures on resize() (_afterResize),
+        // and fitAddon.fit() is neutralized to a no-op — so until the first
+        // setTmuxGrid() forces xterm.resize(), a pane's cell may still be a
+        // fallback-font value (wider than the real one). Using it would push
+        // a wrong client size (attach logs show 135x32 → 128x32 → 135x32).
+        // After that first resize the pane re-measures and matches the host
+        // cell, so preferring the host value is always consistent.
+        const hostCell = this.controller?.getHostCellSize()
+        if (hostCell) return hostCell
+
+        // No host cell (attach-time capture failed) — fall back to a ready
+        // pane's own measurement.
         for (const paneMap of this.windowPaneTabs.values()) {
             for (const paneTab of paneMap.values()) {
-                const frontend = (paneTab as any).frontend
+                const pane = paneTab as any
+                if (!pane._frontendReady) continue
+                const frontend = pane.frontend
                 const dims = frontend?.xtermCore?._renderService?.dimensions
                 if (dims?.css?.cell?.width > 0 && dims?.css?.cell?.height > 0) {
                     return { width: dims.css.cell.width, height: dims.css.cell.height }

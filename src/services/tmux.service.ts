@@ -248,6 +248,27 @@ export class TmuxService {
             this.configService
         )
 
+        // Capture the host terminal's xterm cell size NOW, while it is fully
+        // rendered (the user just triggered "Enter tmux Mode", so fonts are
+        // loaded and the cell measurement is accurate). tmux panes use the
+        // same global font config, so this cell size is what every pane will
+        // end up with — SessionTab uses it to compute the first client size
+        // push correctly, instead of waiting for a pane's xterm to initialize
+        // (whose early measurement may use a fallback font → wrong size).
+        const hostFrontend = (terminalTab as any).frontend
+        const hostDims = hostFrontend?.xtermCore?._renderService?.dimensions
+        if (hostDims?.css?.cell?.width > 0 && hostDims?.css?.cell?.height > 0) {
+            context.controller.setHostCellSize({
+                width: hostDims.css.cell.width,
+                height: hostDims.css.cell.height,
+            })
+            this.log.info(`Captured host xterm cell size: ${hostDims.css.cell.width}x${hostDims.css.cell.height}`)
+        } else {
+            // Shouldn't happen (host terminal is rendered), but fall back to
+            // the original "wait for a pane's xterm" logic.
+            this.logger.warn('Host xterm cell size unavailable at attach time')
+        }
+
         // Subscribe to the interceptor's raw output to parse tmux control mode.
         // Feed raw buffers directly — the gateway handles line buffering internally
         // via executeData(), which properly handles TCP fragment boundaries.

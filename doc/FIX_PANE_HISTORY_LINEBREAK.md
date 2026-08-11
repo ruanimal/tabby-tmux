@@ -183,3 +183,11 @@ capture-pane -epJ -a -S- -t %${paneId}
 通过添加 `-J` 选项，解决了历史输出的换行错位问题。这是一个简单但关键的修复，确保 tmux pane 的内容在 Tabby 中正确显示。
 
 **核心原理**：让 tmux 在捕获时连接被强制换行的行，然后让终端自己根据当前宽度重新换行，而不是保留旧的换行位置。
+
+## 后续更新（2026-08：历史恢复 normalize 链）
+
+`\n → \r\n` 与 `-J` 仍然保留，但 `restorePaneHistory()` 现在在写入前做了一整套 normalize，解决三类历史错位：
+
+1. **`gridApplied()` 等待**：`TmuxPaneSession.start()` 先等 pane 的 xterm 应用 tmux 布局列宽（首次 `setTmuxGrid → xterm.resize`）再恢复历史 —— 否则历史按 xterm 初始列宽（attach 时 fit 用 fallback 字体算的）写入，逻辑行被错误折行。
+2. **折叠 zsh SIGWINCH 重绘残留**：窗口尺寸变化（split/resize/attach 的 refresh-client）时 zsh 重绘 prompt，会把一行 prompt 推进 tmux 历史（每次 +1）；`collapseRedundantTailLines()` 折叠末尾连续相同的行（保留 1 行）。
+3. **删除历史部分/开头的全空格占位行 + pop 末尾伪影空行**：tmux 按窗口宽度存储历史，capture -S- 会输出宽于 pane 的占位行（写入 pane 宽度 xterm 时 wrap 膨胀行数、把屏幕内容下推）；按"最后 rows 行 = 屏幕"剔除历史部分的全空格占位行，并 pop capture 输出末尾换行产生的空元素。

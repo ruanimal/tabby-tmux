@@ -28,6 +28,8 @@ export interface PaneState {
     mouseStandardMode: boolean
     mouseButtonMode: boolean
     mouseAnyMode: boolean
+    /** Pane height in rows (from #{pane_height}); used for cursor restore math. */
+    rows?: number
 }
 
 /** Pre-loaded pane data from batch discovery (iTerm2-style). */
@@ -65,12 +67,61 @@ export class TmuxPaneSession extends BaseSession {
         this.controller.registerPane(this.paneId, this)
     }
 
+    /**
+     * Resolved once TmuxPaneTabComponent has applied the tmux grid
+     * (first setTmuxGrid → xterm.resize). History restore must wait for it:
+     * at xterm init the font is not configured yet (configure() runs after
+     * attach()), so the initial fit-based columns are smaller than the tmux
+     * layout — writing history then wraps logical lines wrongly ("history
+     * shows extra lines" until a manual resize reflows the buffer).
+     */
+    private _gridAppliedResolve: (() => void) | null = null
+    private _gridApplied = new Promise<void>(resolve => {
+        this._gridAppliedResolve = resolve
+    })
+
+    /** Called by TmuxPaneTabComponent.applyTmuxGrid() once the grid is in place. */
+    gridApplied(): void {
+        if (this._gridAppliedResolve) {
+            this._gridAppliedResolve()
+            this._gridAppliedResolve = null
+        }
+    }
+
+    /**
+     * %output received before the tmux grid is applied (xterm still at its
+     * initial columns) is buffered here and flushed once the grid is in
+     * place. Writing before the resize would render at the wrong width and
+     * the subsequent xterm.resize() reflow can reset the cursor — freshly
+     * split panes (slow remote shells) get their prompt via %output exactly
+     * in that window, ending up with the cursor at the line start.
+     */
+    private _pendingOutput: Buffer[] = []
+    private _gridDone = false
+
     async start(): Promise<void> {
         this.open = true
-        // Restore history — for initial attach this is instant (pre-loaded
-        // during batch discovery); for runtime panes it falls back to
-        // capture-pane.
+        // Wait for the pane's xterm to apply the tmux layout grid before
+        // restoring history, so history lines are written at the correct
+        // column width (see _gridApplied docs). 3s timeout as a fallback for
+        // panes that never get a grid (e.g. not present in any layout) —
+        // degraded (possibly mis-wrapped) history is better than none.
+        await Promise.race([
+            this._gridApplied,
+            new Promise<void>(resolve => setTimeout(resolve, 3000)),
+        ])
+        // The xterm is now at the tmux layout columns. Mark the grid done so
+        // restorePaneHistory's feedOutput goes straight to the terminal;
+        // early %output stays buffered and is flushed AFTER the captured
+        // history — the streamed prompt must come after captured content
+        // (flushing first lets a non-empty snapshot overwrite the prompt,
+        // losing it or leaving its cursor CUP on the wrong line → line start).
+        this._gridDone = true
         await this.controller.restorePaneHistory(this.paneId)
+        for (const data of this._pendingOutput) {
+            this.emitOutput(data)
+        }
+        this._pendingOutput = []
     }
 
     resize(_columns: number, _rows: number): void {
@@ -131,6 +182,12 @@ export class TmuxPaneSession extends BaseSession {
     feedOutput(data: Buffer): void {
         data = this.filterScreenTitleSequences(data)
         if (data.length > 0) {
+            // Before the tmux grid is applied (see _pendingOutput docs),
+            // buffer %output instead of writing at the wrong width.
+            if (!this._gridDone) {
+                this._pendingOutput.push(data)
+                return
+            }
             this.emitOutput(data)
         }
     }
@@ -251,6 +308,41 @@ export class TmuxController {
      */
     private windowActivePanes = new Map<number, number>()
 
+    /**
+     * The xterm cell size (CSS pixels) of the host terminal tab, captured at
+     * attach time (TmuxService.attachToTerminal). The host terminal is fully
+     * rendered by the time the user triggers "Enter tmux Mode", so its cell
+     * size is measured with the real (loaded) font — unlike a freshly created
+     * tmux pane whose xterm may still be initializing.
+     *
+     * Pane xterms use the same global font config (tabby-terminal reads
+     * config.terminal.fontFamily/fontSize), so this value equals the cell
+     * size every pane will end up with. SessionTab falls back to it until a
+     * pane's own xterm is ready, which makes the FIRST client size push
+     * correct instead of being based on a fallback-font measurement.
+     *
+     * Null when the host cell could not be read (shouldn't happen); the
+     * original "wait for a pane's xterm" logic remains as the fallback.
+     */
+    private hostCellSize: { width: number; height: number } | null = null
+
+    /**
+     * Whether a client size has been pushed to tmux (refresh-client -C) at
+     * least once. History capture (capture-pane) must not run before this:
+     * tmux would capture the grid at its stale pre-attach size, and restoring
+     * that into a correctly-sized xterm mis-wraps history (multi-line panes).
+     * The flag is set by TmuxSessionTabComponent.refreshClientSize() (Step A)
+     * and guards capturePaneSnapshots() against out-of-order discovery.
+     */
+    private clientSizePushed = false
+
+    /**
+     * Last client size pushed to tmux (refresh-client -C). Rows is needed by
+     * restorePaneHistory() to map a history line index to an xterm screen row
+     * (lines scroll off when the written content exceeds the screen height).
+     */
+    private clientRows = 0
+
     public gateway: TmuxGateway
     public events = new Subject<{ type: string; paneId?: number; windowId?: number; data?: any }>()
 
@@ -285,9 +377,18 @@ export class TmuxController {
             }
         })
 
-        // Handle session changes - this is our main initialization point
-        // Like iTerm2, we immediately batch-discover all windows and panes
-        // instead of relying on delayed list-panes or passive %output discovery.
+        // Handle session changes - this is our main initialization point.
+        // We batch-discover here (like iTerm2) — this is also what makes the
+        // gateway's initialized$ fire (it triggers on the first command
+        // response, see TmuxGateway.finishCurrentCommand), which the UI
+        // depends on to create the SessionTab. Without it, nothing would ever
+        // initialize.
+        //
+        // The capture step is guarded by the clientSizePushed flag: before the
+        // first refresh-client (correct size) the history/screen snapshot is
+        // skipped and rolled back, so it cannot be based on tmux's stale
+        // pre-attach window size. TmuxSessionTabComponent Step B re-discovers
+        // and captures after Step A pushes the size.
         this.gateway.sessionChanged$.subscribe(({ sessionName, sessionId }) => {
             this.sessionName = sessionName
             this.attached = true
@@ -413,6 +514,10 @@ export class TmuxController {
         // Handle initialization
         this.gateway.initialized$.subscribe(() => {
             this.events.next({ type: 'initialized' })
+            // Re-discover here too (idempotent; capture guarded by
+            // clientSizePushed — see sessionChanged$ note). Fires on the
+            // first command response, before the SessionTab's Step A size
+            // push, so any history capture is skipped/rolled back until Step B.
             this.discoverWindowsAndPanes()
         })
     }
@@ -527,7 +632,24 @@ export class TmuxController {
             // (mirrors iTerm2 TmuxWindowOpener)
             if (newPaneIds.length > 0) {
                 this.log.info(`Capturing history/state for ${newPaneIds.length} new pane(s)...`)
-                await this.capturePaneSnapshots(newPaneIds)
+                const captured = await this.capturePaneSnapshots(newPaneIds)
+                if (!captured) {
+                    // Client size not pushed yet (out-of-order discovery, e.g.
+                    // %window-add arriving before the first refresh-client).
+                    // Roll back so a later discover (after the size push) re-
+                    // discovers and captures these panes with the correct size;
+                    // otherwise Step 4 would emit pane-add without snapshots
+                    // and the history would never be restored.
+                    this.log.warn('Rolling back discovery: retrying after client size is pushed')
+                    for (const { paneId, windowId } of newPaneIds) {
+                        this.knownPanes.delete(paneId)
+                        this.windowStates.get(windowId)?.panes.delete(paneId)
+                        if (this.windowActivePanes.get(windowId) === paneId) {
+                            this.windowActivePanes.delete(windowId)
+                        }
+                    }
+                    return
+                }
             }
 
             // Step 4: Emit pane-add events — history is now pre-loaded
@@ -639,11 +761,33 @@ export class TmuxController {
             this.log.info(`Discovered ${newPaneIds.length} new pane(s) from layout-change for window @${windowId}`)
 
             // Capture history + state for new panes (same as discoverWindowsAndPanes Step 3)
-            await this.capturePaneSnapshots(newPaneIds)
-
-            // Emit pane-add events — history is now pre-loaded
-            for (const { paneId, windowId: wid } of newPaneIds) {
-                this.events.next({ type: 'pane-add', paneId, windowId: wid })
+            const captured = await this.capturePaneSnapshots(newPaneIds)
+            if (!captured) {
+                // Client size not pushed yet (out-of-order %layout-change before
+                // the first refresh-client). Roll back so a later discover
+                // (after the size push) re-discovers and captures these panes;
+                // otherwise pane-add would be emitted without snapshots and the
+                // history would never be restored.
+                this.log.warn('Rolling back layout discovery: retrying after client size is pushed')
+                for (const { paneId, windowId: wid } of newPaneIds) {
+                    this.knownPanes.delete(paneId)
+                    this.windowStates.get(wid)?.panes.delete(paneId)
+                    if (this.windowActivePanes.get(wid) === paneId) {
+                        this.windowActivePanes.delete(wid)
+                    }
+                }
+                // Do NOT emit layout-change here: syncLayout would create pane
+                // tabs for panes whose snapshots were rolled back, and their
+                // history would never be restored (pane-add from the later
+                // re-discovery is swallowed by paneMap.has). A later discover
+                // (after the size push) re-adds these panes and emits both
+                // pane-add and layout-change.
+                return
+            } else {
+                // Emit pane-add events — history is now pre-loaded
+                for (const { paneId, windowId: wid } of newPaneIds) {
+                    this.events.next({ type: 'pane-add', paneId, windowId: wid })
+                }
             }
         }
 
@@ -658,7 +802,21 @@ export class TmuxController {
      * Capture history + state for an array of panes.
      * Shared by discoverWindowsAndPanes() and discoverPanesFromLayout().
      */
-    private async capturePaneSnapshots(paneIds: Array<{ paneId: number; windowId: number }>): Promise<void> {
+    private async capturePaneSnapshots(paneIds: Array<{ paneId: number; windowId: number }>): Promise<boolean> {
+        // Guard: capturing history/screen before any client size has been
+        // pushed (refresh-client -C) uses tmux's stale pre-attach window size,
+        // and restoring that into the correctly-sized xterm mis-wraps history
+        // (panes showing extra/multi-line content until a manual resize
+        // reflows). Initial discovery is triggered by
+        // TmuxSessionTabComponent Step B AFTER the Step A size push; this
+        // guard only protects against out-of-order discovery (e.g. if the -CC
+        // prologue behavior ever changes and %window-add fires early).
+        // Returns false so the caller can roll back and let a later discover
+        // (after the size push) re-capture these panes.
+        if (!this.hasClientSizePushed) {
+            this.log.warn(`Skipping history capture for ${paneIds.length} pane(s): client size not pushed yet`)
+            return false
+        }
         const stateFormat = [
             'pane_id=#{pane_id}',
             'alternate_on=#{alternate_on}',
@@ -678,6 +836,7 @@ export class TmuxController {
             'mouse_standard_flag=#{mouse_standard_flag}',
             'mouse_button_flag=#{mouse_button_flag}',
             'mouse_any_flag=#{mouse_any_flag}',
+            'pane_height=#{pane_height}',
         ].join('\t')
 
         const captures = paneIds.map(async ({ paneId }) => {
@@ -703,6 +862,7 @@ export class TmuxController {
             }
         })
         await Promise.all(captures)
+        return true
     }
 
 
@@ -713,16 +873,23 @@ export class TmuxController {
         this.paneSessions.set(paneId, session)
         this.knownPanes.add(paneId)
 
-        // If a snapshot exists, the pending output is redundant — the snapshot
-        // already contains the same content (and more). Discard it to avoid
-        // writing the prompt/scrollback twice (once from buffered %output,
-        // once from capture-pane history in restorePaneHistory).
-        if (this.pendingSnapshots.has(paneId)) {
+        // If the snapshot already captured real content, the pending output
+        // is redundant — the snapshot contains the same content (and more),
+        // and restorePaneHistory will write it. Discard the buffer to avoid
+        // writing the prompt/scrollback twice.
+        // But if the snapshot is EMPTY (the pane was captured before its
+        // shell printed the prompt — e.g. a fresh window on a slow remote
+        // box, cursor_x=0), the buffered %output is the ONLY copy of the
+        // prompt. Keep and flush it; dropping it would leave the pane
+        // without a prompt ("sometimes no prompt at all").
+        const snapshot = this.pendingSnapshots.get(paneId)
+        if (snapshot && snapshot.history && snapshot.history.trim()) {
             this.pendingPaneOutput.delete(paneId)
             return
         }
 
-        // No snapshot (shouldn't happen normally) — flush buffered output
+        // Snapshot absent or empty — flush buffered output to the session
+        // (it will render once the tmux grid is applied).
         const buffered = this.pendingPaneOutput.get(paneId)
         if (buffered) {
             for (const data of buffered) {
@@ -742,6 +909,7 @@ export class TmuxController {
         // Use refresh-client -C to set client size
         // This affects all panes uniformly in non-variable-size mode
         // Note: paneId is ignored as tmux control mode uses uniform size
+        this.clientRows = rows
         this.gateway.sendCommand(
             `refresh-client -C ${columns},${rows}`,
             TMUX_COMMAND_TOLERATE_ERRORS
@@ -783,9 +951,58 @@ export class TmuxController {
         // Step 1: Write primary screen history to the primary screen.
         // This sets up the scrollback so it's available if the user leaves
         // the program running on the alternate screen.
+        // Normalize the history before writing it:
+        // 1. collapseRedundantTailLines — fold zsh SIGWINCH prompt redraws
+        //    (N identical prompt lines accumulated in history) down to one.
+        // 2. Drop all-whitespace placeholder lines from the HISTORY part
+        //    (everything before the last `rows` lines = the tmux screen).
+        //    tmux stores history at window width, so these placeholders are
+        //    often wider than the pane (or are plain blanks) and are pure
+        //    scrollback padding, not real content: feeding them into the
+        //    pane-width xterm wraps them (inflating line count / skewing
+        //    cursor math) and, with no real history, pushes the restored
+        //    screen down one row (prompt ends up on row 2 instead of row 1).
+        //    Removing them restores the prompt to the top; the screen part
+        //    (the last `rows` lines) is kept as-is, so genuine blank screen
+        //    rows are preserved and the prompt position still matches the
+        //    tmux screen when real history exists.
+        let primary = ''
         if (snapshot.history) {
-            const normalized = snapshot.history.replace(/\n/g, '\r\n')
-            session.feedOutput(Buffer.from(normalized, 'utf-8'))
+            primary = this.collapseRedundantTailLines(snapshot.history)
+            // capture-pane output ends with a trailing newline, so split()
+            // yields one extra empty element; drop it FIRST so the
+            // history/screen split below uses the real line count (otherwise
+            // screenStart is off by one and the first screen row can be
+            // mistaken for history and dropped).
+            const lines = primary.split('\n')
+            if (lines.length > 1 && lines[lines.length - 1] === '') {
+                lines.pop()
+            }
+            // Drop history-part placeholders (see the normalize notes above).
+            const rows = state.rows
+            if (rows && rows > 0 && lines.length > rows) {
+                const screenStart = lines.length - rows
+                primary = lines
+                    .filter((l, i) => i >= screenStart || l.trim() !== '')
+                    .join('\n')
+            } else {
+                primary = lines.join('\n')
+            }
+            // Also drop leading all-whitespace rows: after a size change tmux
+            // may leave blank padding at the top of the screen (and capture
+            // -S- can be exactly `rows` lines, so those rows count as
+            // "screen", not "history"). With no real content above the
+            // prompt the user expects the prompt at row 0, not under a blank
+            // row. When real history exists the leading rows are content
+            // (non-blank), so this only ever strips padding (a genuine blank
+            // first scrollback row would also be stripped, but in the
+            // streaming model that is visually indistinguishable).
+            const finalLines = primary.split('\n')
+            while (finalLines.length > 0 && finalLines[0].trim() === '') {
+                finalLines.shift()
+            }
+            primary = finalLines.join('\n')
+            session.feedOutput(Buffer.from(primary.replace(/\n/g, '\r\n'), 'utf-8'))
         }
 
         // Step 2: If the pane is on the alternate screen (vim, less, etc.),
@@ -833,9 +1050,101 @@ export class TmuxController {
                 session.feedOutput(Buffer.from('\x1b[?1047l', 'utf-8'))
             }
 
-            // Apply terminal state (cursor, scroll region, modes)
-            this.applyPaneState(session, state)
+            // Apply terminal state (cursor, scroll region, modes).
+            // Compute the last non-empty line first: when the pane was
+            // captured before the shell printed its prompt (e.g. a freshly
+            // split bash login shell still initializing), primary is empty
+            // and we must skip the cursor CUP — otherwise the stale initial
+            // cursor_x (often 0) places the cursor at the line start instead
+            // of after the prompt that %output streams in afterwards.
+            const lines = primary.split('\n')
+            let lastNonEmpty = -1
+            for (let i = lines.length - 1; i >= 0; i--) {
+                if (lines[i].trim() !== '') {
+                    lastNonEmpty = i
+                    break
+                }
+            }
+            this.applyPaneState(session, state, lastNonEmpty < 0)
+
+            // Cursor correction (zsh compatibility + capture -S- offset).
+            // iTerm2's VT100Terminal stores history in a separate scrollback
+            // (setTmuxHistory), so cursorY (screen-relative) maps directly to
+            // its grid. xterm is streaming: we write "history + screen" via
+            // feedOutput, so when the content is shorter than the screen the
+            // history lines stay on top and shift the tmux screen content
+            // down; additionally zsh's SIGWINCH prompt redraw can leave tmux's
+            // reported cursor_y on a blank line (prompt redrawn elsewhere).
+            // Instead of trusting cursor_y, put the cursor at the end of the
+            // last non-empty content line, keeping tmux's horizontal cursor_x.
+            // On the primary screen the cursor normally sits on the prompt /
+            // last output line; full-screen apps (vim/less/htop) use the
+            // alternate screen and take the branch above.
+            if (lastNonEmpty >= 0) {
+                // After writing N lines into a `rows` screen, output line i
+                // lands at xterm y = i - max(0, N - rows) (excess scrolls off).
+                // Use the pane's own captured height (state.rows) — with
+                // vertical splits each pane is shorter than the client, and
+                // using clientRows would overshoot and make xterm scroll.
+                const rows = state.rows ?? Math.max(1, this.clientRows)
+                const scrolled = Math.max(0, lines.length - rows)
+                const y = Math.max(0, Math.min(rows - 1, lastNonEmpty - scrolled))
+                // Visible width (strip SGR color codes) for a sane X clamp.
+                const visible = lines[lastNonEmpty].replace(/\x1b\[[0-9;]*m/g, '').length
+                // If tmux captured cursor_x = 0 but the last non-empty line
+                // (the prompt) has content, the pane was captured before the
+                // shell printed its prompt (slow login shells, e.g. bash on a
+                // fresh split: cursor still at 0,0) and %output delivered the
+                // prompt afterwards — the stale cursor_x would place the
+                // cursor at the start of the prompt line. Put it after the
+                // prompt instead. If the user was genuinely editing at column
+                // 0 the cursor jumps to end-of-line, which is acceptable on
+                // restore.
+                const x = state.cursorX > 0
+                    ? Math.max(0, Math.min(state.cursorX, Math.max(visible, 0)))
+                    : Math.max(0, Math.max(visible, 0))
+                session.feedOutput(Buffer.from(`\x1b[${y + 1};${x + 1}H`, 'utf-8'))
+            }
         }
+    }
+
+    /**
+     * Collapse redundant trailing lines that are identical to the last
+     * non-empty line. This is a zsh compatibility fix:
+     *
+     * When the tmux window size changes (split, resize, or the attach-time
+     * refresh-client), zsh receives SIGWINCH and redraws its prompt. The
+     * redraw pushes the current prompt line into the tmux scrollback
+     * (once per resize), while the screen itself keeps showing a single
+     * prompt. Over multiple resizes/attaches this accumulates N identical
+     * prompt lines in history, and capture-pane -S- (history + screen)
+     * restores them all — the pane looks like it has N repeated prompts.
+     * bash does not redraw on SIGWINCH, so it is unaffected.
+     *
+     * We fold only the TRAILING run of lines that are byte-identical to the
+     * last non-empty line (keeping one). Ordinary multi-line history is
+     * untouched unless it happens to end in identical lines.
+     */
+    private collapseRedundantTailLines(history: string): string {
+        const lines = history.split('\n')
+        let tail = lines.length - 1
+        while (tail >= 0 && lines[tail].trim() === '') {
+            tail--
+        }
+        if (tail <= 0) {
+            return history
+        }
+
+        // Count how many lines directly above `tail` are identical to it.
+        let sameStart = tail - 1
+        while (sameStart >= 0 && lines[sameStart] === lines[tail] && lines[sameStart].trim() !== '') {
+            sameStart--
+        }
+        const redundant = tail - sameStart - 1
+        if (redundant > 0) {
+            lines.splice(sameStart + 1, redundant)
+        }
+        return lines.join('\n')
     }
 
     /**
@@ -905,6 +1214,7 @@ export class TmuxController {
                 case 'mouse_standard_flag': state.mouseStandardMode = n === 1; break
                 case 'mouse_button_flag': state.mouseButtonMode = n === 1; break
                 case 'mouse_any_flag': state.mouseAnyMode = n === 1; break
+                case 'pane_height': if (!isNaN(n)) state.rows = n; break
             }
         }
         return state
@@ -914,9 +1224,9 @@ export class TmuxController {
      * Apply parsed pane state to the terminal via ANSI escape sequences.
      * Mirrors iTerm2 VT100ScreenMutableState.setTmuxState:.
      */
-    private applyPaneState(session: TmuxPaneSession, state: PaneState): void {
+    private applyPaneState(session: TmuxPaneSession, state: PaneState, skipCursor = false): void {
         // Build a sequence of escape codes to restore terminal state.
-        const seq = this.buildModeSequences(state)
+        const seq = this.buildModeSequences(state, skipCursor)
         session.feedOutput(Buffer.from(seq, 'utf-8'))
     }
 
@@ -924,7 +1234,7 @@ export class TmuxController {
      * Build ANSI escape sequences for terminal mode state (without alternate
      * screen entry).  Used by both applyPaneState and pendingAltRestore.
      */
-    private buildModeSequences(state: PaneState): string {
+    private buildModeSequences(state: PaneState, skipCursor = false): string {
         const csi = (s: string) => `\x1b[${s}`
         const esc = (s: string) => `\x1b${s}`
         let seq = ''
@@ -934,8 +1244,12 @@ export class TmuxController {
             seq += csi(`${state.scrollRegionUpper + 1};${state.scrollRegionLower + 1}r`)
         }
 
-        // Restore cursor position (CUP)
-        seq += csi(`${state.cursorY + 1};${state.cursorX + 1}H`)
+        // Restore cursor position (CUP) — skipped when the pane was captured
+        // before its shell printed anything (primary history empty), so the
+        // cursor stays where the streamed %output leaves it.
+        if (!skipCursor) {
+            seq += csi(`${state.cursorY + 1};${state.cursorX + 1}H`)
+        }
 
         // Cursor visibility (DECTCEM)
         seq += state.cursorFlag ? csi('?25h') : csi('?25l')
@@ -960,16 +1274,22 @@ export class TmuxController {
         seq += state.mouseButtonMode ? csi('?1002h') : csi('?1002l')
         seq += state.mouseAnyMode ? csi('?1003h') : csi('?1003l')
 
-        // Tab stops (HTS / TBC)
-        // TBC 3 = clear all tab stops, then HTS at each position
-        seq += csi('3g')
-        for (const col of state.paneTabs) {
-            seq += csi(`${col + 1}G`) // CUP to column
-            seq += esc('H')           // HTS
+        // Tab stops (HTS / TBC) — skipped with the cursor setup when
+        // skipCursor is set (cursor-moving sequences need the reset CUP).
+        if (!skipCursor) {
+            // TBC 3 = clear all tab stops, then HTS at each position
+            seq += csi('3g')
+            for (const col of state.paneTabs) {
+                seq += csi(`${col + 1}G`) // CUP to column
+                seq += esc('H')           // HTS
+            }
         }
 
-        // Reset cursor back to final position (tab stop setup moves it)
-        seq += csi(`${state.cursorY + 1};${state.cursorX + 1}H`)
+        // Reset cursor back to final position (tab stop setup moves it) —
+        // skipped together with the earlier CUP when skipCursor is set.
+        if (!skipCursor) {
+            seq += csi(`${state.cursorY + 1};${state.cursorX + 1}H`)
+        }
 
         return seq
     }
@@ -1057,6 +1377,34 @@ export class TmuxController {
     }
 
     // --- Getters ---
+
+    /**
+     * Record the host terminal tab's xterm cell size, captured at attach time
+     * (TmuxService.attachToTerminal). See hostCellSize docs for why this makes
+     * the first client size push correct.
+     */
+    setHostCellSize(size: { width: number; height: number } | null): void {
+        this.hostCellSize = size
+    }
+
+    /**
+     * The host terminal's xterm cell size, or null if it could not be read.
+     * SessionTab uses this as the cell-size reference until a mounted pane's
+     * own xterm reports its (identical) dimensions.
+     */
+    getHostCellSize(): { width: number; height: number } | null {
+        return this.hostCellSize
+    }
+
+    /** Mark that a client size has been pushed to tmux (see clientSizePushed). */
+    setClientSizePushed(): void {
+        this.clientSizePushed = true
+    }
+
+    /** Whether refresh-client -C has been sent at least once. */
+    get hasClientSizePushed(): boolean {
+        return this.clientSizePushed
+    }
 
     get isAttached(): boolean {
         return this.attached

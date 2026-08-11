@@ -9,6 +9,10 @@ const __dirname = url.fileURLToPath(new URL('.', import.meta.url))
 
 export default {
   mode: 'development',
+  // Disable webpack's filesystem cache (dev-mode default): incremental builds
+  // failed to pick up source changes, leaving stale dist output that looked
+  // like the fix wasn't applied. Correctness over rebuild speed here.
+  cache: false,
   devtool: 'source-map',
   target: 'node',
   entry: {
