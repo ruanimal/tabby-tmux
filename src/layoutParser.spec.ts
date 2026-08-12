@@ -103,7 +103,14 @@ describe('parseTmuxLayout', () => {
 
 describe('flattenLayout', () => {
     it('returns a single pane for a pane node', () => {
-        const node: TmuxLayoutNode = { type: 'pane', x: 0, y: 0, width: 93, height: 52, paneId: 185 }
+        const node: TmuxLayoutNode = {
+            type: 'pane',
+            x: 0,
+            y: 0,
+            width: 93,
+            height: 52,
+            paneId: 185,
+        }
         expect(flattenLayout(node)).toEqual([{ paneId: 185, x: 0, y: 0, width: 93, height: 52 }])
     })
 
@@ -131,6 +138,8 @@ describe('flattenLayout', () => {
                 { type: 'pane', x: 0, y: 50, width: 100, height: 50 },
             ],
         }
-        expect(flattenLayout(node)).toEqual<TmuxPane[]>([{ paneId: 1, x: 0, y: 0, width: 100, height: 50 }])
+        expect(flattenLayout(node)).toEqual<TmuxPane[]>([
+            { paneId: 1, x: 0, y: 0, width: 100, height: 50 },
+        ])
     })
 })

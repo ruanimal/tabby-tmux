@@ -171,13 +171,22 @@ describe('TmuxGateway executeLine notifications', () => {
     it('parses %layout-change with optional visible layout and zoom flag', async () => {
         const { gateway } = createGateway()
         await initGateway(gateway)
-        const changes: { windowId: number; layout: string; visibleLayout?: string; zoomed?: boolean }[] =
-            []
+        const changes: {
+            windowId: number
+            layout: string
+            visibleLayout?: string
+            zoomed?: boolean
+        }[] = []
         gateway.layoutChange$.subscribe((c) => changes.push(c))
         gateway.executeLine('%layout-change @1 41e9,279x71,0,0[279x40,0,0,71]')
         gateway.executeLine('%layout-change @2 aa,80x24,0,0 bb,80x24,0,0 Z')
         expect(changes).toEqual([
-            { windowId: 1, layout: '41e9,279x71,0,0[279x40,0,0,71]', visibleLayout: undefined, zoomed: undefined },
+            {
+                windowId: 1,
+                layout: '41e9,279x71,0,0[279x40,0,0,71]',
+                visibleLayout: undefined,
+                zoomed: undefined,
+            },
             { windowId: 2, layout: 'aa,80x24,0,0', visibleLayout: 'bb,80x24,0,0', zoomed: true },
         ])
     })

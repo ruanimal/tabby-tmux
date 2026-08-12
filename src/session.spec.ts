@@ -235,9 +235,7 @@ describe('TmuxController', () => {
             ),
         )
         await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-panes')))
-        controller.gateway.executeData(
-            Buffer.from('%begin 1 2 1\n%1 @0 1\n%2 @0 0\n%end 2\n'),
-        )
+        controller.gateway.executeData(Buffer.from('%begin 1 2 1\n%1 @0 1\n%2 @0 0\n%end 2\n'))
         await discover
 
         expect(controller.getAllPaneIds()).toEqual([1, 2])
