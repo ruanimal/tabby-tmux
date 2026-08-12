@@ -19,7 +19,7 @@
         "build": "webpack --progress --color",
         "watch": "webpack --progress --color --watch",
         "lint": "eslint src --ext .ts",
-        "typecheck": "tsc --noEmit",
+        "typecheck": "tsc --noEmit && tsc -p tsconfig.spec.json --noEmit",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "test": "vitest run",
