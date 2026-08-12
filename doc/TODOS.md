@@ -10,7 +10,7 @@
 - [x] zoom pane 的交互可能需要优化，没法分辨当前是否是 zoom 状态
 - [x] tmux会话恢复的布局还是有点问题: 内容还是有些错位, 估计是尺寸还是有点问题
     - vim 的 hello 页面 会丢失, 和这个无关, vim 在终端此处变化后 hello 内容自然会丢.
-- [ ] focus all tmux panes 的实现可以优化，区分是 current window 还是所有 window
+- [x] focus all tmux panes 的实现可以优化，区分是 current window 还是所有 window（右键菜单改为 "Focus all tmux panes" 二级菜单，含 Current window / All windows 两个互斥范围项；范围状态提升到 controller 的 SyncScope）
 - [x] 断开重新连接后没有激活正确的 pane/window; 同时通过tab栏切换window时, pane 的激活状态也有问题, window 和 pane 的激活状态是否要分开维护
 - [ ] 搜索终端内容
 

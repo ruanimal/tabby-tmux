@@ -2,7 +2,7 @@ import { Component, ElementRef, HostListener, Injector, Input, OnInit } from '@a
 import { first } from 'rxjs'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { MenuItemOptions } from 'tabby-core'
-import { TmuxController, TmuxPaneSession } from '../session'
+import { TmuxController, TmuxPaneSession, SyncScope } from '../session'
 
 @Component({
     selector: 'tmux-pane-tab',
@@ -23,13 +23,6 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
      * This flag is managed by TmuxSessionTabComponent.focus().
      */
     _tmuxActive = true
-
-    /**
-     * When true, input is broadcast to all panes in the tmux session
-     * ("Focus all tmux panes" / synchronize-panes mode).
-     * Toggled via the right-click context menu.
-     */
-    _tmuxSyncInput = false
 
     /**
      * User clicked this pane. Routes to the session tab's
@@ -425,8 +418,9 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
      * Guard sendInput so that only the active pane forwards hotkey-triggered
      * input (Ctrl+C, Home, End, etc.) to its tmux session.
      *
-     * When _tmuxSyncInput is enabled ("Focus all tmux panes"), input is also
-     * broadcast to all other panes in the session.
+     * When "Focus all tmux panes" is active, input is also broadcast to the
+     * sync targets. The scope (current window vs all windows) lives on the
+     * controller and is shared by every pane tab.
      */
     override sendInput(data: string | Buffer): void {
         if (!this._tmuxActive) {
@@ -434,13 +428,11 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         }
         super.sendInput(data)
 
-        // Broadcast to all other panes when sync mode is active
-        if (this._tmuxSyncInput && this.controller) {
+        // Broadcast to the sync targets when sync mode is active
+        if (this.controller && this.controller.getSyncScope() !== 'off') {
             const buf = Buffer.isBuffer(data) ? data : Buffer.from(data)
-            for (const pid of this.controller.getAllPaneIds()) {
-                if (pid !== this.paneId) {
-                    this.controller.writeToPane(pid, buf)
-                }
+            for (const pid of this.controller.getSyncTargetPaneIds(this.paneId)) {
+                this.controller.writeToPane(pid, buf)
             }
         }
     }
@@ -472,7 +464,8 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     /**
      * Override the native context menu to provide tmux-specific items only.
      * Keeps: Copy, Paste, Close (pane).
-     * Adds: Exit Tmux Mode, Split submenu, Focus all tmux panes.
+     * Adds: Exit Tmux Mode, Split submenu, Zoom pane, Focus all tmux panes
+     * submenu (scope: current window or all windows).
      */
     async buildContextMenu(): Promise<MenuItemOptions[]> {
         const items: MenuItemOptions[] = [
@@ -509,9 +502,20 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
             },
             {
                 label: this.translate.instant('Focus all tmux panes'),
-                type: 'checkbox',
-                checked: this._tmuxSyncInput,
-                click: () => this.toggleSyncInput(),
+                submenu: [
+                    {
+                        label: this.translate.instant('Current window'),
+                        type: 'checkbox',
+                        checked: this.controller?.getSyncScope() === 'window',
+                        click: () => this.toggleSyncInput('window'),
+                    },
+                    {
+                        label: this.translate.instant('All windows'),
+                        type: 'checkbox',
+                        checked: this.controller?.getSyncScope() === 'all',
+                        click: () => this.toggleSyncInput('all'),
+                    },
+                ] as MenuItemOptions[],
             },
             { type: 'separator' },
             {
@@ -629,29 +633,14 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     }
 
     /**
-     * Toggle "Focus all tmux panes" (synchronize input) across all panes
-     * in the current tmux session.
+     * Toggle "Focus all tmux panes" (synchronized input) for the given scope:
+     * 'window' → panes in the current window (tmux synchronize-panes),
+     * 'all' → every pane in the session. Clicking the already-active scope
+     * turns sync off. The scope is session-level (controller), so every pane
+     * tab agrees on the state.
      */
-    private toggleSyncInput(): void {
+    private toggleSyncInput(scope: SyncScope): void {
         if (!this.controller) return
-        const newValue = !this._tmuxSyncInput
-        for (const pid of this.controller.getAllPaneIds()) {
-            const tab = this.findPaneTab(pid)
-            if (tab) {
-                tab._tmuxSyncInput = newValue
-            }
-        }
-    }
-
-    private findPaneTab(paneId: number): TmuxPaneTabComponent | null {
-        // Walk the session tab's window pane map to find the tab
-        const parent = this.parent as any
-        if (parent?.windowPaneTabs) {
-            for (const paneMap of parent.windowPaneTabs.values()) {
-                const tab = paneMap.get(paneId)
-                if (tab) return tab
-            }
-        }
-        return null
+        this.controller.setSyncScope(this.controller.getSyncScope() === scope ? 'off' : scope)
     }
 }

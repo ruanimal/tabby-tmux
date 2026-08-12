@@ -246,6 +246,16 @@ export class TmuxPaneSession extends BaseSession {
 }
 
 /**
+ * Scope of synchronized input ("Focus all tmux panes").
+ *
+ * - 'off':    input goes to the active pane only (default)
+ * - 'window': input is broadcast to every pane in the SAME window
+ *             (matches tmux's native synchronize-panes semantics)
+ * - 'all':    input is broadcast to every pane across ALL windows
+ */
+export type SyncScope = 'off' | 'window' | 'all'
+
+/**
  * Window state tracking
  */
 interface WindowState {
@@ -282,6 +292,14 @@ export class TmuxController {
      * which pane UI hotkeys route to after switching windows.
      */
     private windowActivePanes = new Map<number, number>()
+
+    /**
+     * Synchronized-input scope for "Focus all tmux panes".
+     *
+     * Lives on the controller (session-level) so every pane tab — including
+     * ones created after the mode was enabled — agrees on the current scope.
+     */
+    private syncScope: SyncScope = 'off'
 
     /**
      * The xterm cell size (CSS pixels) of the host terminal tab, captured at
@@ -1343,9 +1361,64 @@ export class TmuxController {
 
     /**
      * Get all known pane IDs across all windows.
-     * Used by TmuxPaneTabComponent for "Focus all tmux panes" (sync input).
      */
     getAllPaneIds(): number[] {
         return Array.from(this.knownPanes)
+    }
+
+    /**
+     * Current synchronized-input scope ("Focus all tmux panes").
+     */
+    getSyncScope(): SyncScope {
+        return this.syncScope
+    }
+
+    setSyncScope(scope: SyncScope): void {
+        this.syncScope = scope
+    }
+
+    /**
+     * ID of the window that owns the given pane, or null when the pane is
+     * not tracked.
+     */
+    getWindowIdForPane(paneId: number): number | null {
+        for (const state of this.windowStates.values()) {
+            if (state.panes.has(paneId)) {
+                return state.id
+            }
+        }
+        return null
+    }
+
+    /**
+     * Pane IDs that synchronized input should be broadcast to for the given
+     * source pane, honoring the current sync scope. The source pane itself is
+     * excluded.
+     *
+     * - 'window': only panes in the same window (tmux synchronize-panes)
+     * - 'all':    every pane across all windows
+     * - 'off':    empty
+     *
+     * Returns empty when sync is off or the source pane is unknown.
+     */
+    getSyncTargetPaneIds(sourcePaneId: number): number[] {
+        if (this.syncScope === 'off') return []
+        // Unknown source pane: no targets (consistent across scopes)
+        if (!this.knownPanes.has(sourcePaneId)) return []
+        const targets: number[] = []
+        if (this.syncScope === 'window') {
+            const windowId = this.getWindowIdForPane(sourcePaneId)
+            if (windowId === null) return []
+            const panes = this.windowStates.get(windowId)?.panes
+            if (!panes) return []
+            for (const pid of panes) {
+                if (pid !== sourcePaneId) targets.push(pid)
+            }
+        } else {
+            for (const pid of this.knownPanes) {
+                if (pid !== sourcePaneId) targets.push(pid)
+            }
+        }
+        return targets
     }
 }

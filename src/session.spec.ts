@@ -292,6 +292,49 @@ describe('TmuxController', () => {
 
         await new Promise((resolve) => setTimeout(resolve, 80))
     })
+
+    it('broadcasts synchronized input within the current window or all windows', async () => {
+        const { controller } = createController()
+        await initController(controller)
+
+        // @1 owns panes %2, %3; @10 owns pane %4
+        controller.gateway.executeLine('%window-add @1')
+        controller.gateway.executeLine('%window-add @10')
+        controller.gateway.executeLine(
+            '%layout-change @1 e553,200x50,0,0[200x25,0,0,2,200x24,0,26,3]',
+        )
+        controller.gateway.executeLine('%layout-change @10 ac9d,200x50,0,0,4')
+
+        // Default: sync off — no targets, source pane is unknown
+        expect(controller.getSyncScope()).toBe('off')
+        expect(controller.getWindowIdForPane(3)).toBe(1)
+        expect(controller.getWindowIdForPane(99)).toBeNull()
+        expect(controller.getSyncTargetPaneIds(2)).toEqual([])
+
+        // 'window' scope: only panes of the same window (tmux synchronize-panes)
+        controller.setSyncScope('window')
+        expect(controller.getSyncScope()).toBe('window')
+        expect(controller.getSyncTargetPaneIds(2)).toEqual([3])
+        expect(controller.getSyncTargetPaneIds(3)).toEqual([2])
+        // A single-pane window has no other pane to broadcast to
+        expect(controller.getSyncTargetPaneIds(4)).toEqual([])
+
+        // 'all' scope: every pane across all windows except the source
+        controller.setSyncScope('all')
+        expect(controller.getSyncTargetPaneIds(2)).toEqual([3, 4])
+        expect(controller.getSyncTargetPaneIds(4)).toEqual([2, 3])
+
+        // Unknown source pane: no targets regardless of scope
+        expect(controller.getSyncTargetPaneIds(99)).toEqual([])
+
+        // Toggling back off clears the targets
+        controller.setSyncScope('off')
+        expect(controller.getSyncTargetPaneIds(2)).toEqual([])
+
+        // Let the async layout discovery settle (capture commands time out
+        // after commandTimeoutMs=30 and are swallowed by their try/catch).
+        await new Promise((resolve) => setTimeout(resolve, 80))
+    })
 })
 
 async function waitForWrite(
