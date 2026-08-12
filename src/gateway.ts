@@ -28,7 +28,7 @@ interface PendingCommand {
 export class TmuxGateway {
     private commandQueue: PendingCommand[] = []
     private currentCommand: PendingCommand | null = null
-    private currentCommandId: string = ''
+    private currentCommandId = ''
     private currentResponse: string[] = []
     private inResponseBlock = false
     private nextCommandId = 1
@@ -43,7 +43,12 @@ export class TmuxGateway {
 
     // Events for notifications
     public output$ = new Subject<{ paneId: number; data: Buffer; latency?: number }>()
-    public layoutChange$ = new Subject<{ windowId: number; layout: string; visibleLayout?: string; zoomed?: boolean }>()
+    public layoutChange$ = new Subject<{
+        windowId: number
+        layout: string
+        visibleLayout?: string
+        zoomed?: boolean
+    }>()
     public windowAdd$ = new Subject<number>()
     public windowClose$ = new Subject<number>()
     public windowRenamed$ = new Subject<{ windowId: number; name: string }>()
@@ -58,19 +63,21 @@ export class TmuxGateway {
     constructor(
         private logger: Logger,
         private writer: (data: string) => void,
-        private configService?: ConfigService
-    ) { }
+        private configService?: ConfigService,
+    ) {}
 
-    private get log (): ConditionalLogger {
+    private get log(): ConditionalLogger {
         return createConditionalLogger(this.logger, this.configService)
     }
 
-    private get commandTimeoutMs (): number {
+    private get commandTimeoutMs(): number {
         return this.configService?.store.tmuxPlugin?.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
     }
 
-    private get sendKeysChunkSize (): number {
-        return this.configService?.store.tmuxPlugin?.sendKeysChunkSize ?? DEFAULT_SEND_KEYS_CHUNK_SIZE
+    private get sendKeysChunkSize(): number {
+        return (
+            this.configService?.store.tmuxPlugin?.sendKeysChunkSize ?? DEFAULT_SEND_KEYS_CHUNK_SIZE
+        )
     }
 
     /**
@@ -88,7 +95,7 @@ export class TmuxGateway {
                 resolve,
                 reject,
                 flags,
-                timestamp: Date.now()
+                timestamp: Date.now(),
             }
             this.commandQueue.push(cmd)
             this.write(command + '\r')
@@ -106,7 +113,10 @@ export class TmuxGateway {
         })
 
         // Clean up timer when original settles
-        original.then(() => clearTimeout(timer!), () => clearTimeout(timer!))
+        original.then(
+            () => clearTimeout(timer!),
+            () => clearTimeout(timer!),
+        )
 
         return Promise.race([original, timeout])
     }
@@ -168,20 +178,24 @@ export class TmuxGateway {
      */
     executeLine(line: string): void {
         // Strip DCS artifacts
-        line = line.replace(/^\x1bP\d+p/, '').replace(/^P\d+p/, '').replace(/\x1b\\$/, '')
+        line = line
+            .replace(/^\x1bP\d+p/, '')
+            .replace(/^P\d+p/, '')
+            .replace(/\x1b\\$/, '')
         if (!line) return
 
         this.log.info(`Received: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`)
 
         // Handle response blocks
         if (this.inResponseBlock) {
-            if (line.startsWith(`%end ${this.currentCommandId}`) ||
-                line.startsWith(`%end `)) {
+            if (line.startsWith(`%end ${this.currentCommandId}`) || line.startsWith(`%end `)) {
                 this.stripLastNewline()
                 this.finishCurrentCommand(false)
                 return
-            } else if (line.startsWith(`%error ${this.currentCommandId}`) ||
-                line.startsWith(`%error `)) {
+            } else if (
+                line.startsWith(`%error ${this.currentCommandId}`) ||
+                line.startsWith(`%error `)
+            ) {
                 this.stripLastNewline()
                 this.finishCurrentCommand(true)
                 return
@@ -217,7 +231,9 @@ export class TmuxGateway {
                 this.log.info(`Parsing output line: ${line.substring(0, 50)}...`)
                 this.parseOutput(line)
             } else {
-                this.log.warn(`Ignored output (not accepting notifications): ${line.substring(0, 50)}...`)
+                this.log.warn(
+                    `Ignored output (not accepting notifications): ${line.substring(0, 50)}...`,
+                )
             }
         } else if (line.startsWith('%extended-output ')) {
             if (this.acceptNotifications) {
@@ -235,7 +251,10 @@ export class TmuxGateway {
             if (this.acceptNotifications) {
                 this.parseWindowClose(line)
             }
-        } else if (line.startsWith('%window-renamed') || line.startsWith('%unlinked-window-renamed')) {
+        } else if (
+            line.startsWith('%window-renamed') ||
+            line.startsWith('%unlinked-window-renamed')
+        ) {
             if (this.acceptNotifications) {
                 this.parseWindowRenamed(line)
             }
@@ -344,7 +363,9 @@ export class TmuxGateway {
 
         const paneId = parseInt(match[1])
         const data = this.decodeOutput(match[2])
-        this.log.info(`Parsed output for pane %${paneId}: ${data.length} bytes (match_len=${match[2].length})`)
+        this.log.info(
+            `Parsed output for pane %${paneId}: ${data.length} bytes (match_len=${match[2].length})`,
+        )
         this.output$.next({ paneId, data })
     }
 
@@ -395,7 +416,7 @@ export class TmuxGateway {
         if (match) {
             this.windowRenamed$.next({
                 windowId: parseInt(match[1]),
-                name: this.unescapeTmuxWindowName(match[2])
+                name: this.unescapeTmuxWindowName(match[2]),
             })
         }
     }
@@ -406,7 +427,7 @@ export class TmuxGateway {
         if (match) {
             this.sessionChanged$.next({
                 sessionId: parseInt(match[1]),
-                sessionName: match[2]
+                sessionName: match[2],
             })
             // Enable notifications after session change
             this.acceptNotifications = true
@@ -418,7 +439,7 @@ export class TmuxGateway {
         const match = line.match(/^%session-window-changed \$\d+ @(\d+)/)
         if (match) {
             this.sessionWindowChanged$.next({
-                windowId: parseInt(match[1])
+                windowId: parseInt(match[1]),
             })
         }
     }
@@ -429,7 +450,7 @@ export class TmuxGateway {
         if (match) {
             this.paneChanged$.next({
                 windowId: parseInt(match[1]),
-                paneId: parseInt(match[2])
+                paneId: parseInt(match[2]),
             })
         }
     }
@@ -440,7 +461,7 @@ export class TmuxGateway {
         if (match) {
             this.paneClose$.next({
                 windowId: parseInt(match[1]),
-                paneId: parseInt(match[2])
+                paneId: parseInt(match[2]),
             })
         }
     }
@@ -485,5 +506,4 @@ export class TmuxGateway {
         // Tmux may escape window names
         return name.replace(/\\(.)/g, '$1')
     }
-
 }

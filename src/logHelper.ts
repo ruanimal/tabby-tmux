@@ -11,7 +11,10 @@ export interface ConditionalLogger {
  * Wrap a Logger so that debug/info are gated behind debugLogging config,
  * while warn/error always pass through.
  */
-export function createConditionalLogger (logger: Logger, configService?: ConfigService): ConditionalLogger {
+export function createConditionalLogger(
+    logger: Logger,
+    configService?: ConfigService,
+): ConditionalLogger {
     return {
         debug: (...args: any[]) => {
             if (configService?.store?.tmuxPlugin?.debugLogging) logger.debug(...args)

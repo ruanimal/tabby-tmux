@@ -43,7 +43,7 @@ npm install tabby-tmux
 
 ### Right-click behavior
 
-By default, right-clicking inside a tmux pane opens the **tmux pane context menu** (used for actions like *Enter/Exit Tmux Mode*, *New Window*, etc.), regardless of the *Settings → Terminal → "On right-click"* option.
+By default, right-clicking inside a tmux pane opens the **tmux pane context menu** (used for actions like _Enter/Exit Tmux Mode_, _New Window_, etc.), regardless of the _Settings → Terminal → "On right-click"_ option.
 
 If you set **"On right-click"** to `Paste` or `Clipboard` in Tabby settings, this plugin will respect that choice:
 

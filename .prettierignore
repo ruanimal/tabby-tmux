@@ -1,0 +1,22 @@
+# Generated artifacts
+dist/
+typings/
+
+# Dependencies
+node_modules/
+
+# Package manager
+pnpm-lock.yaml
+
+# Reference material and docs (not project source)
+ref/
+doc/
+
+# Local files
+note.local.md
+log/
+
+# Tool config
+.reasonix/
+.pnpm-store/
+.vfox/

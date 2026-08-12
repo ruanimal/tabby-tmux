@@ -34,10 +34,10 @@
  * overlay scrollbar (.tmux-pane-scrollbar) replaces it. */
 :host ::ng-deep .xterm-viewport {
     overflow-y: auto !important;
-    scrollbar-width: none;               /* Firefox */
+    scrollbar-width: none; /* Firefox */
 }
 :host ::ng-deep .xterm-viewport::-webkit-scrollbar {
-    display: none;                       /* Chromium / Electron */
+    display: none; /* Chromium / Electron */
 }
 
 /* Custom overlay scrollbar — absolutely positioned over the right edge of

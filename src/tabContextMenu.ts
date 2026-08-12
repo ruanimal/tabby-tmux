@@ -15,9 +15,7 @@ import { TmuxPaneTabComponent } from './components/tmuxPaneTab.component'
 export class TmuxContextMenuProvider extends TabContextMenuItemProvider {
     weight = 5
 
-    constructor(
-        private tmuxService: TmuxService,
-    ) {
+    constructor(private tmuxService: TmuxService) {
         super()
     }
 
@@ -66,7 +64,9 @@ export class TmuxContextMenuProvider extends TabContextMenuItemProvider {
                 {
                     label: 'Enter Tmux Mode',
                     click: async () => {
-                        await this.tmuxService.attachToTerminal(tab as BaseTerminalTabComponent<any>)
+                        await this.tmuxService.attachToTerminal(
+                            tab as BaseTerminalTabComponent<any>,
+                        )
                     },
                 },
             ]
@@ -75,21 +75,22 @@ export class TmuxContextMenuProvider extends TabContextMenuItemProvider {
         return []
     }
 
-    private async splitPane(paneTab: TmuxPaneTabComponent, direction: 'right' | 'down' | 'left' | 'up'): Promise<void> {
+    private async splitPane(
+        paneTab: TmuxPaneTabComponent,
+        direction: 'right' | 'down' | 'left' | 'up',
+    ): Promise<void> {
         const controller = paneTab.controller
         if (!controller) return
 
         const paneId = paneTab.paneId
         const flagMap: Record<string, string> = {
-            'right': '-h',
-            'down': '-v',
-            'left': '-h -b',
-            'up': '-v -b',
+            right: '-h',
+            down: '-v',
+            left: '-h -b',
+            up: '-v -b',
         }
         const flag = flagMap[direction]
-        await controller.gateway.sendCommand(
-            `split-window ${flag} -t %${paneId}`
-        )
+        await controller.gateway.sendCommand(`split-window ${flag} -t %${paneId}`)
         // Discover the new pane and trigger layout update
         await controller.refreshPanes()
     }
@@ -100,4 +101,3 @@ export class TmuxContextMenuProvider extends TabContextMenuItemProvider {
         await controller.killPane(paneTab.paneId)
     }
 }
-

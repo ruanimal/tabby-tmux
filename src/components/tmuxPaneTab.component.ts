@@ -7,10 +7,7 @@ import { TmuxController, TmuxPaneSession } from '../session'
 @Component({
     selector: 'tmux-pane-tab',
     template: BaseTerminalTabComponent.template,
-    styles: [
-        ...BaseTerminalTabComponent.styles,
-        require('./tmuxPaneTab.component.scss'),
-    ],
+    styles: [...BaseTerminalTabComponent.styles, require('./tmuxPaneTab.component.scss')],
     animations: BaseTerminalTabComponent.animations,
 })
 export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implements OnInit {
@@ -82,7 +79,7 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
             options: {},
             // Required properties for BaseTerminalTabComponent
             behaviorOnSessionEnd: 'close',
-            terminalColorScheme: null,  // Use default
+            terminalColorScheme: null, // Use default
         }
         this.setTitle(`Pane %${this.paneId}`)
 
@@ -125,7 +122,9 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
                 // Replace fit() with a no-op so the grid stays exactly what tmux
                 // tells us. Keep a reference in case we ever need to restore it.
                 if (frontend.fitAddon && typeof frontend.fitAddon.fit === 'function') {
-                    frontend.fitAddon.fit = () => { /* tmux-authoritative: no auto-fit */ }
+                    frontend.fitAddon.fit = () => {
+                        /* tmux-authoritative: no auto-fit */
+                    }
                 }
             }
             // Apply any grid size that arrived before the frontend was ready.
@@ -210,7 +209,9 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         // xterm 6+ virtual-scroll model: the built-in overlay scrollbar
         // exists, no custom bar needed.
         if (this._paneHost.querySelector('.xterm-scrollable-element')) {
-            this.logger.info(`Pane %${this.paneId}: xterm 6+ scroll model, using built-in scrollbar`)
+            this.logger.info(
+                `Pane %${this.paneId}: xterm 6+ scroll model, using built-in scrollbar`,
+            )
             return
         }
 
@@ -221,7 +222,9 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         // ResizeObserver events keep the thumb in sync afterwards.
         const viewport = this._paneHost.querySelector<HTMLElement>('.xterm-viewport')
         if (!viewport) {
-            this.logger.info(`Pane %${this.paneId}: no .xterm-viewport found, skipping custom scrollbar`)
+            this.logger.info(
+                `Pane %${this.paneId}: no .xterm-viewport found, skipping custom scrollbar`,
+            )
             return
         }
         this._scrollbarViewport = viewport
@@ -252,8 +255,12 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         this._scrollbarResizeObserver.observe(viewport)
 
         // Interactions: click on the track jumps; drag on the thumb scrolls.
-        this.addEventListenerUntilDestroyed(track, 'mousedown', (e: MouseEvent) => this.onScrollbarTrackMouseDown(e))
-        this.addEventListenerUntilDestroyed(thumb, 'mousedown', (e: MouseEvent) => this.startScrollbarDrag(e))
+        this.addEventListenerUntilDestroyed(track, 'mousedown', (e: MouseEvent) =>
+            this.onScrollbarTrackMouseDown(e),
+        )
+        this.addEventListenerUntilDestroyed(thumb, 'mousedown', (e: MouseEvent) =>
+            this.startScrollbarDrag(e),
+        )
         this.addEventListenerUntilDestroyed(track, 'mouseenter', () => {
             this.clearScrollbarHideTimer()
             track.classList.add('visible')
@@ -365,7 +372,10 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
             const usable = trackHeight - thumbHeight
             if (usable <= 0) return
             const ratio = (ev.clientY - startY) / usable
-            viewport.scrollTop = Math.max(0, Math.min(maxScroll, startScrollTop + ratio * maxScroll))
+            viewport.scrollTop = Math.max(
+                0,
+                Math.min(maxScroll, startScrollTop + ratio * maxScroll),
+            )
             this.showScrollbarTemporarily()
         }
         const onUp = (): void => {
@@ -379,7 +389,7 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         document.addEventListener('mouseup', onUp)
     }
 
-    override ngOnDestroy (): void {
+    override ngOnDestroy(): void {
         this.clearScrollbarHideTimer()
         this._scrollbarResizeObserver?.disconnect()
         this._scrollbarResizeObserver = null
@@ -460,7 +470,7 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
      * Keeps: Copy, Paste, Close (pane).
      * Adds: Exit Tmux Mode, Split submenu, Focus all tmux panes.
      */
-    async buildContextMenu (): Promise<MenuItemOptions[]> {
+    async buildContextMenu(): Promise<MenuItemOptions[]> {
         const items: MenuItemOptions[] = [
             {
                 label: this.translate.instant('Copy'),
@@ -474,7 +484,10 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
             {
                 label: this.translate.instant('Split'),
                 submenu: [
-                    { label: this.translate.instant('Right'), click: () => this.splitPane('right') },
+                    {
+                        label: this.translate.instant('Right'),
+                        click: () => this.splitPane('right'),
+                    },
                     { label: this.translate.instant('Down'), click: () => this.splitPane('down') },
                     { label: this.translate.instant('Left'), click: () => this.splitPane('left') },
                     { label: this.translate.instant('Up'), click: () => this.splitPane('up') },
@@ -501,7 +514,7 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         return items
     }
 
-    protected override async handleRightMouseDown (event: MouseEvent): Promise<void> {
+    protected override async handleRightMouseDown(event: MouseEvent): Promise<void> {
         // Only hijack right-click for the tmux pane menu when the user actually
         // wants a menu. Otherwise defer to the base handler so that the
         // configured `terminal.rightClick` behaviour (paste / clipboard) works.
@@ -517,7 +530,7 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     }
 
     /** Whether this pane is currently zoomed (fills the entire window). */
-    get _isZoomed (): boolean {
+    get _isZoomed(): boolean {
         if (!this.controller || !this.paneId) return false
         // Find which window owns this pane
         for (const ws of this.controller.getAllWindowStates()) {
@@ -529,21 +542,21 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     }
 
     /** Toggle zoom via tmux resize-pane -Z (same as prefix+z). */
-    private async toggleZoom (): Promise<void> {
+    private async toggleZoom(): Promise<void> {
         if (!this.controller) return
         await this.controller.zoomPane(this.paneId)
     }
 
-    private async splitPane (direction: 'right' | 'down' | 'left' | 'up'): Promise<void> {
+    private async splitPane(direction: 'right' | 'down' | 'left' | 'up'): Promise<void> {
         if (!this.controller) return
         const flagMap: Record<string, string> = {
-            'right': '-h',
-            'down': '-v',
-            'left': '-h -b',
-            'up': '-v -b',
+            right: '-h',
+            down: '-v',
+            left: '-h -b',
+            up: '-v -b',
         }
         await this.controller.gateway.sendCommand(
-            `split-window ${flagMap[direction]} -t %${this.paneId}`
+            `split-window ${flagMap[direction]} -t %${this.paneId}`,
         )
         // No explicit refresh needed — the %layout-change notification
         // from tmux will trigger discoverPanesFromLayout() in TmuxController,
@@ -551,7 +564,7 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         // history (iTerm2-style).
     }
 
-    private async closePane (): Promise<void> {
+    private async closePane(): Promise<void> {
         if (!this.controller) return
         await this.controller.killPane(this.paneId)
     }
@@ -560,7 +573,7 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
      * Toggle "Focus all tmux panes" (synchronize input) across all panes
      * in the current tmux session.
      */
-    private toggleSyncInput (): void {
+    private toggleSyncInput(): void {
         if (!this.controller) return
         const newValue = !this._tmuxSyncInput
         for (const pid of this.controller.getAllPaneIds()) {
@@ -571,7 +584,7 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         }
     }
 
-    private findPaneTab (paneId: number): TmuxPaneTabComponent | null {
+    private findPaneTab(paneId: number): TmuxPaneTabComponent | null {
         // Walk the session tab's window pane map to find the tab
         const parent = this.parent as any
         if (parent?.windowPaneTabs) {

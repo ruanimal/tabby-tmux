@@ -61,7 +61,9 @@ function parseNode(str: string, start: number): ParseResult {
     // Parse dimension: WxH,X,Y
     const dimMatch = str.substring(start).match(/^(\d+)x(\d+),(\d+),(\d+)/)
     if (!dimMatch) {
-        throw new Error(`Invalid dimension at position ${start}: ${str.substring(start, start + 20)}`)
+        throw new Error(
+            `Invalid dimension at position ${start}: ${str.substring(start, start + 20)}`,
+        )
     }
 
     const width = parseInt(dimMatch[1])
@@ -93,7 +95,7 @@ function parseNode(str: string, start: number): ParseResult {
         pos++ // skip ']'
         return {
             node: { type: 'vertical', x, y, width, height, children },
-            consumed: pos
+            consumed: pos,
         }
     } else if (nextChar === '{') {
         // Horizontal split (left-to-right) — tmux {...} = panes side by side
@@ -110,7 +112,7 @@ function parseNode(str: string, start: number): ParseResult {
         pos++ // skip '}'
         return {
             node: { type: 'horizontal', x, y, width, height, children },
-            consumed: pos
+            consumed: pos,
         }
     } else if (nextChar === ',' || nextChar === ']' || nextChar === '}' || pos >= str.length) {
         // This is a pane - the next number is the pane ID
@@ -124,14 +126,14 @@ function parseNode(str: string, start: number): ParseResult {
                 pos += paneIdMatch[0].length
                 return {
                     node: { type: 'pane', x, y, width, height, paneId },
-                    consumed: pos
+                    consumed: pos,
                 }
             }
         }
         // No pane ID found, this might be a container
         return {
             node: { type: 'pane', x, y, width, height },
-            consumed: pos
+            consumed: pos,
         }
     } else {
         throw new Error(`Unexpected character '${nextChar}' at position ${pos}`)
@@ -151,7 +153,7 @@ export function flattenLayout(node: TmuxLayoutNode): TmuxPane[] {
                 x: n.x,
                 y: n.y,
                 width: n.width,
-                height: n.height
+                height: n.height,
             })
         }
         if (n.children) {

@@ -1,6 +1,24 @@
-import { Component, Injector, Input, OnInit, OnDestroy, ChangeDetectorRef, ElementRef } from '@angular/core'
+import {
+    Component,
+    Injector,
+    Input,
+    OnInit,
+    OnDestroy,
+    ChangeDetectorRef,
+    ElementRef,
+} from '@angular/core'
 import { Subscription } from 'rxjs'
-import { SplitTabComponent, SplitContainer, LogService, Logger, TabsService, HotkeysService, GetRecoveryTokenOptions, RecoveryToken, ConfigService } from 'tabby-core'
+import {
+    SplitTabComponent,
+    SplitContainer,
+    LogService,
+    Logger,
+    TabsService,
+    HotkeysService,
+    GetRecoveryTokenOptions,
+    RecoveryToken,
+    ConfigService,
+} from 'tabby-core'
 import { TabRecoveryService } from 'tabby-core'
 import { TmuxController } from '../session'
 import { TmuxService } from '../services/tmux.service'
@@ -29,7 +47,7 @@ export interface TmuxSessionProfile {
 @Component({
     selector: 'tmux-session-tab',
     host: {
-        '[class.tmux-session-host]': 'true'
+        '[class.tmux-session-host]': 'true',
     },
     template: `
         <div class="pane-area" #paneAreaEl>
@@ -44,70 +62,74 @@ export interface TmuxSessionProfile {
             (createWindow)="onCreateWindow()"
         ></tmux-window-bar>
     `,
-    styles: [`
-        :host {
-            position: relative;
-            display: flex;
-            flex-direction: column;
-            width: 100%;
-            height: 100%;
-        }
-        .pane-area {
-            flex: 1 1 0;
-            position: relative;
-            min-height: 0;
-            padding: 4px;
-            box-sizing: border-box;
-        }
-        /* Pane containers: pixel-absolute positioned by applyPixelLayout().
+    styles: [
+        `
+            :host {
+                position: relative;
+                display: flex;
+                flex-direction: column;
+                width: 100%;
+                height: 100%;
+            }
+            .pane-area {
+                flex: 1 1 0;
+                position: relative;
+                min-height: 0;
+                padding: 4px;
+                box-sizing: border-box;
+            }
+            /* Pane containers: pixel-absolute positioned by applyPixelLayout().
            No border, no padding — the xterm canvas fills the entire box. */
-        ::ng-deep .pane-area > .child {
-            position: absolute;
-            box-sizing: border-box;
-            opacity: .75;
-            transition: opacity 0.125s;
-        }
-        ::ng-deep .pane-area > .child.focused {
-            opacity: 1;
-        }
-        /* Independent divider elements for pane boundaries + resize dragging.
+            ::ng-deep .pane-area > .child {
+                position: absolute;
+                box-sizing: border-box;
+                opacity: 0.75;
+                transition: opacity 0.125s;
+            }
+            ::ng-deep .pane-area > .child.focused {
+                opacity: 1;
+            }
+            /* Independent divider elements for pane boundaries + resize dragging.
            Width/height is set inline to 1 cell to match tmux's 1-char separator.
            The visible line is a 1px ::after pseudo-element centered in the hit area. */
-        ::ng-deep .tmux-divider {
-            position: absolute;
-            z-index: 5;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        ::ng-deep .tmux-divider::after {
-            content: '';
-            background: rgba(128,128,128,0.3);
-            transition: background 0.15s;
-        }
-        ::ng-deep .tmux-divider:hover::after {
-            background: rgba(128,128,128,0.75);
-        }
-        ::ng-deep .tmux-divider.v {   /* vertical divider: left-right split */
-            cursor: col-resize;
-        }
-        ::ng-deep .tmux-divider.v::after {
-            width: 1px;
-            height: 100%;
-        }
-        ::ng-deep .tmux-divider.h {   /* horizontal divider: top-bottom split */
-            cursor: row-resize;
-        }
-        ::ng-deep .tmux-divider.h::after {
-            height: 1px;
-            width: 100%;
-        }
-        tmux-window-bar {
-            flex: 0 0 auto;
-            position: relative;
-            z-index: 10;
-        }
-    `]
+            ::ng-deep .tmux-divider {
+                position: absolute;
+                z-index: 5;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            ::ng-deep .tmux-divider::after {
+                content: '';
+                background: rgba(128, 128, 128, 0.3);
+                transition: background 0.15s;
+            }
+            ::ng-deep .tmux-divider:hover::after {
+                background: rgba(128, 128, 128, 0.75);
+            }
+            ::ng-deep .tmux-divider.v {
+                /* vertical divider: left-right split */
+                cursor: col-resize;
+            }
+            ::ng-deep .tmux-divider.v::after {
+                width: 1px;
+                height: 100%;
+            }
+            ::ng-deep .tmux-divider.h {
+                /* horizontal divider: top-bottom split */
+                cursor: row-resize;
+            }
+            ::ng-deep .tmux-divider.h::after {
+                height: 1px;
+                width: 100%;
+            }
+            tmux-window-bar {
+                flex: 0 0 auto;
+                position: relative;
+                z-index: 10;
+            }
+        `,
+    ],
 })
 export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit, OnDestroy {
     @Input() profile: TmuxSessionProfile = {}
@@ -147,12 +169,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         private hostElement: ElementRef,
         log: LogService,
     ) {
-        super(
-            injector.get(HotkeysService),
-            tabsService,
-            injector.get(TabRecoveryService),
-            injector
-        )
+        super(injector.get(HotkeysService), tabsService, injector.get(TabRecoveryService), injector)
         this._tabsService = tabsService
         this.logger = log.create('tmux-session')
     }
@@ -174,7 +191,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         // handleControllerEvent contains async operations (switchToWindow, syncLayout)
         // that must not interleave. Without serialization, concurrent switches from
         // multiple window-add events (during refreshPanes) corrupt activeWindowId.
-        this.eventSubscription = this.controller.events.subscribe(event => {
+        this.eventSubscription = this.controller.events.subscribe((event) => {
             this.eventQueue = this.eventQueue.then(() => this.handleControllerEvent(event))
         })
 
@@ -231,9 +248,10 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             await this.eventQueue
 
             const activeWindowId = this.controller!.getActiveWindowId()
-            const targetWindowId = (activeWindowId !== null && this.windowPaneTabs.has(activeWindowId))
-                ? activeWindowId
-                : this.controller!.getFirstWindowId()
+            const targetWindowId =
+                activeWindowId !== null && this.windowPaneTabs.has(activeWindowId)
+                    ? activeWindowId
+                    : this.controller!.getFirstWindowId()
             if (targetWindowId !== undefined) {
                 // Route through the serial queue so this initial switch cannot
                 // interleave with queued pane/layout events.
@@ -276,7 +294,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             if (ctrlWindowState) {
                 for (const paneId of ctrlWindowState.panes) {
                     if (!paneMap.has(paneId)) {
-                        this.logger.info(`Bootstrap: creating pane tab for %${paneId} in window @${windowState.id}`)
+                        this.logger.info(
+                            `Bootstrap: creating pane tab for %${paneId} in window @${windowState.id}`,
+                        )
                         const paneTab = this.createPaneTab(paneId)
                         paneTab.controller = this.controller
                         paneTab.paneId = paneId
@@ -293,14 +313,20 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         this.cdr.detectChanges()
     }
 
-    private async handleControllerEvent(event: { type: string; paneId?: number; windowId?: number; data?: any }): Promise<void> {
+    private async handleControllerEvent(event: {
+        type: string
+        paneId?: number
+        windowId?: number
+        data?: any
+    }): Promise<void> {
         this.logger.info('SessionTab event:', event.type, event)
 
         switch (event.type) {
             case 'initialized':
             case 'session-changed':
                 this.connected = true
-                this.sessionName = this.controller?.getSessionName() || this.profile.sessionName || 'default'
+                this.sessionName =
+                    this.controller?.getSessionName() || this.profile.sessionName || 'default'
                 this.setTitle(`Tmux: ${this.sessionName}`)
                 this.cdr.detectChanges()
                 break
@@ -341,7 +367,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
             case 'pane-add':
                 if (event.paneId !== undefined && event.windowId !== undefined) {
-                    this.logger.info(`Handling pane-add event: pane=${event.paneId}, window=${event.windowId}`)
+                    this.logger.info(
+                        `Handling pane-add event: pane=${event.paneId}, window=${event.windowId}`,
+                    )
                     await this.handlePaneAdd(event.paneId, event.windowId)
                 }
                 break
@@ -349,14 +377,18 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             case 'pane-update':
                 if (event.paneId !== undefined && event.windowId !== undefined) {
                     // Pane might have moved to a different window
-                    this.logger.info(`Handling pane-update event: pane=${event.paneId}, window=${event.windowId}`)
+                    this.logger.info(
+                        `Handling pane-update event: pane=${event.paneId}, window=${event.windowId}`,
+                    )
                     await this.handlePaneUpdate(event.paneId, event.windowId)
                 }
                 break
 
             case 'pane-close':
                 if (event.paneId !== undefined && event.windowId !== undefined) {
-                    this.logger.info(`Handling pane-close event: pane=${event.paneId}, window=${event.windowId}`)
+                    this.logger.info(
+                        `Handling pane-close event: pane=${event.paneId}, window=${event.windowId}`,
+                    )
                     this.handlePaneClose(event.paneId, event.windowId)
                 }
                 break
@@ -377,10 +409,12 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                         await this.syncLayout(
                             event.data.layout,
                             event.data.zoomed,
-                            event.data.visibleLayout
+                            event.data.visibleLayout,
                         )
                     } else {
-                        this.logger.info(`Layout changed for inactive window @${event.windowId}, saved for next switch`)
+                        this.logger.info(
+                            `Layout changed for inactive window @${event.windowId}, saved for next switch`,
+                        )
                     }
                 }
                 break
@@ -405,7 +439,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     enqueueSwitchToWindow(windowId: number): void {
         this.eventQueue = this.eventQueue
             .then(() => this.switchToWindow(windowId))
-            .catch(err => this.logger.warn('switchToWindow failed:', err))
+            .catch((err) => this.logger.warn('switchToWindow failed:', err))
     }
 
     /**
@@ -424,9 +458,11 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         if (this.activeWindowId !== null) {
             const paneMap = this.windowPaneTabs.get(this.activeWindowId)
             if (paneMap) {
-                this.logger.info(`Detaching ${paneMap.size} pane(s) for window @${this.activeWindowId}`)
+                this.logger.info(
+                    `Detaching ${paneMap.size} pane(s) for window @${this.activeWindowId}`,
+                )
                 for (const paneTab of paneMap.values()) {
-                    (paneTab as any).emitVisibility(false)
+                    ;(paneTab as any).emitVisibility(false)
                     this.detachPaneView(paneTab as any)
                 }
             }
@@ -444,13 +480,17 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         if (paneMap.size === 0) {
             const windowState = this.controller?.getWindowState(windowId)
             if (windowState?.layout) {
-                this.logger.info(`No pane tabs yet for window @${windowId}, but layout is known — discovering panes proactively`)
+                this.logger.info(
+                    `No pane tabs yet for window @${windowId}, but layout is known — discovering panes proactively`,
+                )
                 const { parseTmuxLayout, flattenLayout } = await import('../layoutParser')
                 const layoutTree = parseTmuxLayout(windowState.layout)
                 if (layoutTree) {
                     for (const pane of flattenLayout(layoutTree)) {
                         if (!paneMap.has(pane.paneId)) {
-                            this.logger.info(`Proactively creating pane tab for %${pane.paneId} in window @${windowId}`)
+                            this.logger.info(
+                                `Proactively creating pane tab for %${pane.paneId} in window @${windowId}`,
+                            )
                             const paneTab = this.createPaneTab(pane.paneId)
                             paneTab.controller = this.controller!
                             paneTab.paneId = pane.paneId
@@ -459,7 +499,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                     }
                 }
             } else {
-                this.logger.info(`No pane tabs yet for window @${windowId}, waiting for pane-add events`)
+                this.logger.info(
+                    `No pane tabs yet for window @${windowId}, waiting for pane-add events`,
+                )
             }
         } else {
             this.logger.info(`Mounting existing ${paneMap.size} pane(s) for window @${windowId}`)
@@ -477,7 +519,10 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             if (fullTree) {
                 for (const pane of flattenLayout(fullTree)) {
                     if (!paneMap.has(pane.paneId)) {
-                        this.logger.info(`Creating pane tab for %${pane.paneId}` + (isZoomed ? ' (zoomed window)' : ''))
+                        this.logger.info(
+                            `Creating pane tab for %${pane.paneId}` +
+                                (isZoomed ? ' (zoomed window)' : ''),
+                        )
                         const paneTab = this.createPaneTab(pane.paneId)
                         paneTab.controller = this.controller!
                         paneTab.paneId = pane.paneId
@@ -493,13 +538,12 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         this.root.orientation = 'h'
 
         // Display layout: visibleLayout when zoomed (what's on screen), layout otherwise
-        const displayLayoutStr = isZoomed && windowState?.visibleLayout
-            ? windowState.visibleLayout
-            : windowState?.layout
+        const displayLayoutStr =
+            isZoomed && windowState?.visibleLayout ? windowState.visibleLayout : windowState?.layout
         const displayTree = displayLayoutStr ? parseTmuxLayout(displayLayoutStr) : null
         const displayPanes = displayTree ? flattenLayout(displayTree) : null
         const displayPaneIds = displayPanes
-            ? new Set(displayPanes.map(p => p.paneId))
+            ? new Set(displayPanes.map((p) => p.paneId))
             : new Set(paneMap.keys()) // no layout → show all
 
         const paneTabs = Array.from(paneMap.values())
@@ -579,7 +623,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         // hotkey-triggered input (Ctrl+C, paste, etc.).
         for (const t of this.getAllTabs()) {
             if (t instanceof TmuxPaneTabComponent) {
-                t._tmuxActive = (t === tab)
+                t._tmuxActive = t === tab
             }
         }
         this.updatePaneFocusClasses()
@@ -600,10 +644,11 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         // focus(tab) where focusedTab is already `tab`.
         if (syncToTmux && changed && this.controller && tab instanceof TmuxPaneTabComponent) {
             this.logger.info(`focus changed → select-pane %${tab.paneId}`)
-            this.controller.gateway.sendCommand(
-                `select-pane -t %${tab.paneId}`,
-                TMUX_COMMAND_TOLERATE_ERRORS
-            ).catch(() => { /* tmux may reject during detach */ })
+            this.controller.gateway
+                .sendCommand(`select-pane -t %${tab.paneId}`, TMUX_COMMAND_TOLERATE_ERRORS)
+                .catch(() => {
+                    /* tmux may reject during detach */
+                })
         }
     }
 
@@ -629,10 +674,8 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      */
     private updatePaneFocusClasses(): void {
         const focusedTab = this.getFocusedTab() as TmuxPaneTabComponent | null
-        const viewRefs = (this as any).viewRefs as Map<
-            TmuxPaneTabComponent,
-            { rootNodes: Node[] }
-        > | undefined
+        const viewRefs = (this as any).viewRefs as
+            Map<TmuxPaneTabComponent, { rootNodes: Node[] }> | undefined
 
         for (const [paneTab, viewRef] of viewRefs ?? []) {
             const element = viewRef.rootNodes[0] as HTMLElement | undefined
@@ -670,7 +713,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     private restoreActivePaneFocus(
         windowId: number,
         paneTabs: TmuxPaneTabComponent[],
-        displayPanes: Array<{ paneId: number }> | null
+        displayPanes: Array<{ paneId: number }> | null,
     ): void {
         // Defer to setImmediate: the base class's onAfterTabAdded() schedules
         // `setImmediate(() => this.focus(tab))` for EVERY addTab() in the
@@ -684,13 +727,16 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             // NOT paneMap insertion order — pane creation order is unrelated
             // to visual order and picking the wrong pane caused unstable
             // activation.
-            const activePaneTab = paneTabs.find(t => t.paneId === ctrlActivePaneId)
-                ?? (displayPanes
-                    ? displayPanes.map(p => paneTabs.find(t => t.paneId === p.paneId)).find(t => t !== undefined)
+            const activePaneTab =
+                paneTabs.find((t) => t.paneId === ctrlActivePaneId) ??
+                (displayPanes
+                    ? displayPanes
+                          .map((p) => paneTabs.find((t) => t.paneId === p.paneId))
+                          .find((t) => t !== undefined)
                     : paneTabs[0])
             this.logger.info(
                 `restoreActivePaneFocus win=@${windowId} ctrlPane=${ctrlActivePaneId} ` +
-                `target=${activePaneTab ? `%${activePaneTab.paneId}` : 'none'}`
+                    `target=${activePaneTab ? `%${activePaneTab.paneId}` : 'none'}`,
             )
             if (activePaneTab) {
                 this.focus(activePaneTab as any)
@@ -735,7 +781,8 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * becomes empty. In TmuxSessionTab, an empty root is normal during
      * window switches and should not destroy the session tab.
      */
-    override removeTab(tab: any): void {        const parent = this.getParentOf(tab)
+    override removeTab(tab: any): void {
+        const parent = this.getParentOf(tab)
         if (!parent) return
 
         const index = parent.children.indexOf(tab)
@@ -799,7 +846,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         paneTab.controller = this.controller
         paneTab.paneId = paneId
         paneMap.set(paneId, paneTab)
-        this.logger.info(`Registered new pane %${paneId} for window @${windowId}, awaiting layout sync`)
+        this.logger.info(
+            `Registered new pane %${paneId} for window @${windowId}, awaiting layout sync`,
+        )
     }
 
     /**
@@ -848,7 +897,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
             // If it was in the active window, remove from SplitTab
             if (currentWindowId === this.activeWindowId) {
-                (paneTab as any).emitVisibility(false)
+                ;(paneTab as any).emitVisibility(false)
                 this.detachPaneView(paneTab as any)
             }
         }
@@ -869,10 +918,10 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             // Destroy all pane tabs for this window
             for (const paneTab of paneMap.values()) {
                 if (windowId === this.activeWindowId) {
-                    (paneTab as any).emitVisibility(false)
+                    ;(paneTab as any).emitVisibility(false)
                     this.detachPaneView(paneTab as any)
                 }
-                (paneTab as any).destroy()
+                ;(paneTab as any).destroy()
             }
             this.windowPaneTabs.delete(windowId)
         }
@@ -885,9 +934,10 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 // tmux sends %session-window-changed which updates
                 // controller.activeWindowId — prefer that over arbitrary choice
                 const tmuxActiveId = this.controller?.getActiveWindowId()
-                const target = (tmuxActiveId !== null && this.windowPaneTabs.has(tmuxActiveId))
-                    ? tmuxActiveId
-                    : remainingWindows[0]
+                const target =
+                    tmuxActiveId !== null && this.windowPaneTabs.has(tmuxActiveId)
+                        ? tmuxActiveId
+                        : remainingWindows[0]
                 await this.switchToWindow(target)
             } else {
                 // No windows left — clear dividers
@@ -903,7 +953,11 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * Creates missing pane tabs, attaches their views, cleans up stale
      * panes, and positions everything via pixel-absolute layout.
      */
-    private async syncLayout(layoutStr: string, zoomed?: boolean, visibleLayout?: string): Promise<void> {
+    private async syncLayout(
+        layoutStr: string,
+        zoomed?: boolean,
+        visibleLayout?: string,
+    ): Promise<void> {
         // tmux %layout-change semantics:
         //   layout  = real multi-pane layout (all panes, their actual sizes)
         //   visibleLayout = layout that tmux actually displays on screen
@@ -920,15 +974,17 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             return
         }
         const displayPanes = flattenLayout(displayTree)
-        const displayPaneIds = new Set(displayPanes.map(p => p.paneId))
+        const displayPaneIds = new Set(displayPanes.map((p) => p.paneId))
 
         // Full pane list from layout (always the real multi-pane layout)
         const fullTree = parseTmuxLayout(layoutStr)
         const allPanes = fullTree ? flattenLayout(fullTree) : displayPanes
 
-        this.logger.info(`Syncing layout for window @${this.activeWindowId}: ` +
-            `${displayPanes.length} display pane(s), ${allPanes.length} total` +
-            (zoomed ? ' (zoomed)' : ''))
+        this.logger.info(
+            `Syncing layout for window @${this.activeWindowId}: ` +
+                `${displayPanes.length} display pane(s), ${allPanes.length} total` +
+                (zoomed ? ' (zoomed)' : ''),
+        )
 
         // Ensure pane tabs exist and have attached views
         if (this.activeWindowId !== null) {
@@ -973,7 +1029,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             this.restoreActivePaneFocus(
                 this.activeWindowId,
                 Array.from(paneMap.values()),
-                displayPanes
+                displayPanes,
             )
 
             // Hide panes not in the display set (e.g. non-zoomed panes)
@@ -990,7 +1046,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             // When zoomed, only clean up panes absent from visibleLayout;
             // panes hidden by zoom are still alive in tmux.
             if (!zoomed) {
-                const fullPaneIds = new Set(allPanes.map(p => p.paneId))
+                const fullPaneIds = new Set(allPanes.map((p) => p.paneId))
                 for (const [paneId, paneTab] of paneMap) {
                     if (!fullPaneIds.has(paneId)) {
                         this.logger.info(`Pane %${paneId} no longer in layout, cleaning up`)
@@ -1068,7 +1124,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         // ensureVisiblePaneFocused fall back to an arbitrary pane, firing a
         // spurious select-pane.
         if (!(this as any).viewRefs?.has(paneTab)) {
-            this.logger.info(`Pane %${paneId} not mounted yet, deferring focus to restoreActivePaneFocus`)
+            this.logger.info(
+                `Pane %${paneId} not mounted yet, deferring focus to restoreActivePaneFocus`,
+            )
             return
         }
 
@@ -1086,7 +1144,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
         const panes = flattenLayout(layoutTree)
         const visiblePaneTabs = panes
-            .map(pane => paneMap.get(pane.paneId))
+            .map((pane) => paneMap.get(pane.paneId))
             .filter((paneTab): paneTab is TmuxPaneTabComponent => paneTab !== undefined)
         this.ensureVisiblePaneFocused(visiblePaneTabs)
 
@@ -1109,9 +1167,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             if (viewRef) {
                 const el = viewRef.rootNodes[0] as HTMLElement
                 el.classList.add('child')
-                el.style.left   = `${padL + pane.x * cell.width}px`
-                el.style.top    = `${padT + pane.y * cell.height}px`
-                el.style.width  = `${pane.width * cell.width}px`
+                el.style.left = `${padL + pane.x * cell.width}px`
+                el.style.top = `${padT + pane.y * cell.height}px`
+                el.style.width = `${pane.width * cell.width}px`
                 el.style.height = `${pane.height * cell.height}px`
             }
 
@@ -1159,9 +1217,10 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             // frontend attached). Retry shortly so the first real size still
             // gets sent once a pane has rendered its character grid — but
             // only if panes are expected.
-            const paneMap = this.activeWindowId === null
-                ? undefined
-                : this.windowPaneTabs.get(this.activeWindowId)
+            const paneMap =
+                this.activeWindowId === null
+                    ? undefined
+                    : this.windowPaneTabs.get(this.activeWindowId)
             if (paneMap && paneMap.size > 0) {
                 this.scheduleRefreshClientSize()
             }
@@ -1169,8 +1228,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         }
 
         const { cols, rows } = measured
-        if (cols > 0 && rows > 0 &&
-            (cols !== this._lastSentCols || rows !== this._lastSentRows)) {
+        if (cols > 0 && rows > 0 && (cols !== this._lastSentCols || rows !== this._lastSentRows)) {
             this._lastSentCols = cols
             this._lastSentRows = rows
             this.logger.info(`Setting tmux client size: ${cols}x${rows}`)
@@ -1317,7 +1375,11 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * For container children (non-leaf), we find the actual pane IDs at the
      * boundary using helper methods so drag-resize works at every level.
      */
-    private collectDividers(node: TmuxLayoutNode, cell: { width: number; height: number }, paneArea: HTMLElement): void {
+    private collectDividers(
+        node: TmuxLayoutNode,
+        cell: { width: number; height: number },
+        paneArea: HTMLElement,
+    ): void {
         if (!node.children || node.children.length < 2) {
             return
         }
@@ -1342,7 +1404,17 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 const paneIdA = this.getRightmostLeafPaneId(left)
                 const paneIdB = this.getLeftmostLeafPaneId(right)
 
-                this.createDividerElement(paneArea, 'v', x, top, cell.width, height, paneIdA, paneIdB, cell)
+                this.createDividerElement(
+                    paneArea,
+                    'v',
+                    x,
+                    top,
+                    cell.width,
+                    height,
+                    paneIdA,
+                    paneIdB,
+                    cell,
+                )
             } else {
                 // Children are stacked top-to-bottom → horizontal divider between top and bottom
                 // Divider is 1 cell tall, centered at the shared boundary
@@ -1354,7 +1426,17 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 const paneIdA = this.getBottommostLeafPaneId(left)
                 const paneIdB = this.getTopmostLeafPaneId(right)
 
-                this.createDividerElement(paneArea, 'h', leftPx, y, width, cell.height, paneIdA, paneIdB, cell)
+                this.createDividerElement(
+                    paneArea,
+                    'h',
+                    leftPx,
+                    y,
+                    width,
+                    cell.height,
+                    paneIdA,
+                    paneIdB,
+                    cell,
+                )
             }
         }
 
@@ -1398,8 +1480,12 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     private createDividerElement(
         paneArea: HTMLElement,
         orientation: 'v' | 'h',
-        x: number, y: number, w: number, h: number,
-        paneIdA: number | undefined, paneIdB: number | undefined,
+        x: number,
+        y: number,
+        w: number,
+        h: number,
+        paneIdA: number | undefined,
+        paneIdB: number | undefined,
         cell: { width: number; height: number },
     ): void {
         const div = document.createElement('div')
@@ -1430,7 +1516,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                             const diff = deltaCols - lastSentCols
                             const flag = diff > 0 ? '-R' : '-L'
                             this.controller?.gateway.sendCommand(
-                                `resize-pane ${flag} -t %${paneIdA} ${Math.abs(diff)}`
+                                `resize-pane ${flag} -t %${paneIdA} ${Math.abs(diff)}`,
                             )
                             lastSentCols = deltaCols
                         }
@@ -1440,7 +1526,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                             const diff = deltaRows - lastSentRows
                             const flag = diff > 0 ? '-D' : '-U'
                             this.controller?.gateway.sendCommand(
-                                `resize-pane ${flag} -t %${paneIdA} ${Math.abs(diff)}`
+                                `resize-pane ${flag} -t %${paneIdA} ${Math.abs(diff)}`,
                             )
                             lastSentRows = deltaRows
                         }
@@ -1530,7 +1616,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * the host tab's recovery token so Tabby restores the pre-tmux terminal.
      * The tmux session remains alive in the background and can be re-attached.
      */
-    override async getRecoveryToken (options?: GetRecoveryTokenOptions): Promise<RecoveryToken|null> {
+    override async getRecoveryToken(
+        options?: GetRecoveryTokenOptions,
+    ): Promise<RecoveryToken | null> {
         const ctx = this.tmuxService.findContextForTab(this)
         if (ctx?.topmostTab) {
             return ctx.topmostTab.getRecoveryToken(options)

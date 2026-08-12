@@ -12,11 +12,7 @@ import { TmuxWindowBarComponent } from './components/tmuxWindowBar.component'
 import { TmuxSettingsTabComponent } from './components/settings.component'
 
 @NgModule({
-    imports: [
-        CommonModule,
-        FormsModule,
-        TabbyCoreModule,
-    ],
+    imports: [CommonModule, FormsModule, TabbyCoreModule],
     providers: [
         { provide: TabContextMenuItemProvider, useClass: TmuxContextMenuProvider, multi: true },
         { provide: ConfigProvider, useClass: TmuxConfigProvider, multi: true },
@@ -28,11 +24,6 @@ import { TmuxSettingsTabComponent } from './components/settings.component'
         TmuxWindowBarComponent,
         TmuxSettingsTabComponent,
     ],
-    entryComponents: [
-        TmuxPaneTabComponent,
-        TmuxSessionTabComponent,
-        TmuxSettingsTabComponent,
-    ],
+    entryComponents: [TmuxPaneTabComponent, TmuxSessionTabComponent, TmuxSettingsTabComponent],
 })
-export default class TmuxModule { }
-
+export default class TmuxModule {}

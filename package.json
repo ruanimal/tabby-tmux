@@ -17,7 +17,11 @@
     },
     "scripts": {
         "build": "webpack --progress --color",
-        "watch": "webpack --progress --color --watch"
+        "watch": "webpack --progress --color --watch",
+        "lint": "eslint src --ext .ts",
+        "typecheck": "tsc --noEmit",
+        "format": "prettier --write .",
+        "format:check": "prettier --check ."
     },
     "files": [
         "dist",
@@ -43,8 +47,13 @@
         "@angular/compiler-cli": "^15.2.10",
         "@ngtools/webpack": "^15.2.11",
         "@types/node": "^20.3.1",
+        "@typescript-eslint/eslint-plugin": "^5.62.0",
+        "@typescript-eslint/parser": "^5.62.0",
         "babel-loader": "^10.0.0",
         "css-loader": "^7.1.2",
+        "eslint": "^8.57.1",
+        "eslint-config-prettier": "^9.1.2",
+        "prettier": "^3.9.6",
         "sass": "^1.97.2",
         "sass-loader": "^16.0.6",
         "style-loader": "^4.0.0",

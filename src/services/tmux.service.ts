@@ -22,7 +22,7 @@ class TmuxOutputInterceptor extends SessionMiddleware {
     /** Raw session output, before any middleware processing */
     rawOutput$ = this._rawOutput.asObservable()
 
-    feedFromSession (data: Buffer): void {
+    feedFromSession(data: Buffer): void {
         // Capture raw data for the tmux gateway
         this._rawOutput.next(data)
         // Do NOT call super.feedFromSession() — this blocks data from
@@ -72,7 +72,7 @@ export class TmuxService {
         this.logger = log.create('tmux-service')
     }
 
-    private get log (): ConditionalLogger {
+    private get log(): ConditionalLogger {
         return createConditionalLogger(this.logger, this.configService)
     }
 
@@ -95,12 +95,14 @@ export class TmuxService {
     }
 
     private setupControllerEvents(context: SessionContext): void {
-        context.subscriptions.push(context.controller.events.subscribe(event => {
-            // On initialized, replace the terminal tab with the session tab
-            if (event.type === 'initialized' && !context.sessionTab) {
-                this.replaceWithSessionTab(context)
-            }
-        }))
+        context.subscriptions.push(
+            context.controller.events.subscribe((event) => {
+                // On initialized, replace the terminal tab with the session tab
+                if (event.type === 'initialized' && !context.sessionTab) {
+                    this.replaceWithSessionTab(context)
+                }
+            }),
+        )
     }
 
     private replaceWithSessionTab(context: SessionContext): void {
@@ -140,8 +142,8 @@ export class TmuxService {
         if (index !== -1) {
             const sessionIndex = tabs.indexOf(sessionTab)
             if (sessionIndex !== -1) {
-                tabs.splice(sessionIndex, 1)       // remove from end
-                tabs.splice(index, 0, sessionTab)  // insert at original position
+                tabs.splice(sessionIndex, 1) // remove from end
+                tabs.splice(index, 0, sessionTab) // insert at original position
                 ;(this.appService as any).tabsChanged.next()
             }
         }
@@ -156,15 +158,17 @@ export class TmuxService {
         }
 
         // When the session tab is closed (by user or disconnect), clean up
-        context.subscriptions.push(sessionTab.destroyed$.subscribe(() => {
-            context.sessionTab = undefined
-        }))
+        context.subscriptions.push(
+            sessionTab.destroyed$.subscribe(() => {
+                context.sessionTab = undefined
+            }),
+        )
     }
 
     async disconnectContext(context: SessionContext): Promise<void> {
         this.sessions.delete(context)
 
-        context.subscriptions.forEach(s => s.unsubscribe())
+        context.subscriptions.forEach((s) => s.unsubscribe())
 
         // Detach from tmux control mode so the tmux client process exits
         // cleanly. Without this, the original terminal tab's PTY still has
@@ -189,9 +193,10 @@ export class TmuxService {
         // Restore the original topmost tab to the tab bar at its original position
         if (context.topmostTab) {
             const tabs: any[] = (this.appService as any).tabs
-            const insertAt = context.topmostTabIndex !== undefined
-                ? Math.min(context.topmostTabIndex, tabs.length)
-                : tabs.length
+            const insertAt =
+                context.topmostTabIndex !== undefined
+                    ? Math.min(context.topmostTabIndex, tabs.length)
+                    : tabs.length
             tabs.splice(insertAt, 0, context.topmostTab)
             ;(this.appService as any).tabsChanged.next()
 
@@ -228,7 +233,7 @@ export class TmuxService {
         const context: SessionContext = {
             controller: null!, // Set below
             terminalTab,
-            subscriptions: []
+            subscriptions: [],
         }
 
         // Insert a tmux output interceptor at position 0 of the session's
@@ -245,7 +250,7 @@ export class TmuxService {
             this.injector,
             (data: string) => session.write(Buffer.from(data)),
             () => this.disconnectContext(context),
-            this.configService
+            this.configService,
         )
 
         // Capture the host terminal's xterm cell size NOW, while it is fully
@@ -262,7 +267,9 @@ export class TmuxService {
                 width: hostDims.css.cell.width,
                 height: hostDims.css.cell.height,
             })
-            this.log.info(`Captured host xterm cell size: ${hostDims.css.cell.width}x${hostDims.css.cell.height}`)
+            this.log.info(
+                `Captured host xterm cell size: ${hostDims.css.cell.width}x${hostDims.css.cell.height}`,
+            )
         } else {
             // Shouldn't happen (host terminal is rendered), but fall back to
             // the original "wait for a pane's xterm" logic.
@@ -272,15 +279,19 @@ export class TmuxService {
         // Subscribe to the interceptor's raw output to parse tmux control mode.
         // Feed raw buffers directly — the gateway handles line buffering internally
         // via executeData(), which properly handles TCP fragment boundaries.
-        context.subscriptions.push(interceptor.rawOutput$.subscribe((data: Buffer) => {
-            context.controller.handleData(data)
-        }))
+        context.subscriptions.push(
+            interceptor.rawOutput$.subscribe((data: Buffer) => {
+                context.controller.handleData(data)
+            }),
+        )
 
         // Handle terminal tab closure (disconnect on close)
-        context.subscriptions.push(terminalTab.destroyed$.subscribe(() => {
-            this.log.info('Attached terminal tab closed, disconnecting session')
-            this.disconnectContext(context)
-        }))
+        context.subscriptions.push(
+            terminalTab.destroyed$.subscribe(() => {
+                this.log.info('Attached terminal tab closed, disconnecting session')
+                this.disconnectContext(context)
+            }),
+        )
 
         this.sessions.add(context)
         this.setupControllerEvents(context)
@@ -291,6 +302,4 @@ export class TmuxService {
     }
 
     // replaceTabWithTmuxWindow removed as we open new tabs for windows instead
-
 }
-

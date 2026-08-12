@@ -49,7 +49,8 @@ export class TmuxPaneSession extends BaseSession {
      * %layout-change) can re-apply it.  xterm.resize() clears the
      * alternate screen buffer, so the content must be written again.
      */
-    pendingAltRestore: { content: string; cursorY: number; cursorX: number; modes: string } | null = null
+    pendingAltRestore: { content: string; cursorY: number; cursorX: number; modes: string } | null =
+        null
 
     /**
      * Incomplete screen-title sequence (ESC k ... ESC \) spanning
@@ -60,7 +61,7 @@ export class TmuxPaneSession extends BaseSession {
     constructor(
         logger: Logger,
         private controller: TmuxController,
-        public paneId: number
+        public paneId: number,
     ) {
         super(logger)
         this.open = true
@@ -76,7 +77,7 @@ export class TmuxPaneSession extends BaseSession {
      * shows extra lines" until a manual resize reflows the buffer).
      */
     private _gridAppliedResolve: (() => void) | null = null
-    private _gridApplied = new Promise<void>(resolve => {
+    private _gridApplied = new Promise<void>((resolve) => {
         this._gridAppliedResolve = resolve
     })
 
@@ -108,7 +109,7 @@ export class TmuxPaneSession extends BaseSession {
         // degraded (possibly mis-wrapped) history is better than none.
         await Promise.race([
             this._gridApplied,
-            new Promise<void>(resolve => setTimeout(resolve, 3000)),
+            new Promise<void>((resolve) => setTimeout(resolve, 3000)),
         ])
         // The xterm is now at the tmux layout columns. Mark the grid done so
         // restorePaneHistory's feedOutput goes straight to the terminal;
@@ -362,16 +363,16 @@ export class TmuxController {
     public gateway: TmuxGateway
     public events = new Subject<{ type: string; paneId?: number; windowId?: number; data?: any }>()
 
-    private get log (): ConditionalLogger {
+    private get log(): ConditionalLogger {
         return createConditionalLogger(this.logger, this.configService)
     }
 
     constructor(
         private logger: Logger,
-        _injector: Injector,  // eslint-disable-line @typescript-eslint/no-unused-vars
+        _injector: Injector, // eslint-disable-line @typescript-eslint/no-unused-vars
         writer: (data: string) => void,
         private closer: () => void,
-        private configService?: ConfigService
+        private configService?: ConfigService,
     ) {
         this.gateway = new TmuxGateway(logger, writer, configService)
         this.setupGatewaySubscriptions()
@@ -415,12 +416,12 @@ export class TmuxController {
         })
 
         // Handle window events
-        this.gateway.windowAdd$.subscribe(windowId => {
+        this.gateway.windowAdd$.subscribe((windowId) => {
             if (!this.windowStates.has(windowId)) {
                 this.windowStates.set(windowId, {
                     id: windowId,
                     name: `Window ${windowId}`,
-                    panes: new Set()
+                    panes: new Set(),
                 })
             }
             this.events.next({ type: 'window-add', windowId })
@@ -445,7 +446,7 @@ export class TmuxController {
             })
         })
 
-        this.gateway.windowClose$.subscribe(windowId => {
+        this.gateway.windowClose$.subscribe((windowId) => {
             this.windowStates.delete(windowId)
             this.windowActivePanes.delete(windowId)
             this.events.next({ type: 'window-close', windowId })
@@ -533,7 +534,7 @@ export class TmuxController {
             this.events.next({ type: 'active-pane-changed', paneId, windowId })
         })
 
-        this.gateway.exit$.subscribe(reason => {
+        this.gateway.exit$.subscribe((reason) => {
             this.attached = false
             this.events.next({ type: 'exit', data: { reason } })
             this.closer()
@@ -584,8 +585,9 @@ export class TmuxController {
         if (this.discoveringPromise) {
             return this.discoveringPromise
         }
-        this.discoveringPromise = this.runDiscoverWindowsAndPanes()
-            .finally(() => { this.discoveringPromise = null })
+        this.discoveringPromise = this.runDiscoverWindowsAndPanes().finally(() => {
+            this.discoveringPromise = null
+        })
         return this.discoveringPromise
     }
 
@@ -595,9 +597,12 @@ export class TmuxController {
             // Step 1: Discover all windows with names, layout and active flag
             const winResult = await this.gateway.sendCommand(
                 'list-windows -F "#{window_id} #{window_name} #{window_active} #{window_layout}"',
-                TMUX_COMMAND_TOLERATE_ERRORS
+                TMUX_COMMAND_TOLERATE_ERRORS,
             )
-            const winLines = winResult.split(/[\r\n]+/).map(l => l.trim()).filter(l => l)
+            const winLines = winResult
+                .split(/[\r\n]+/)
+                .map((l) => l.trim())
+                .filter((l) => l)
             this.log.info(`Found ${winLines.length} window(s) from list-windows`)
 
             for (const line of winLines) {
@@ -616,7 +621,7 @@ export class TmuxController {
                             id: windowId,
                             name: windowName,
                             layout,
-                            panes: new Set()
+                            panes: new Set(),
                         })
                         this.events.next({ type: 'window-add', windowId })
                     } else {
@@ -633,9 +638,12 @@ export class TmuxController {
             // session-level active window.
             const paneResult = await this.gateway.sendCommand(
                 'list-panes -s -F "#{pane_id} #{window_id} #{pane_active}"',
-                TMUX_COMMAND_TOLERATE_ERRORS
+                TMUX_COMMAND_TOLERATE_ERRORS,
             )
-            const paneLines = paneResult.split(/[\r\n]+/).map(l => l.trim()).filter(l => l)
+            const paneLines = paneResult
+                .split(/[\r\n]+/)
+                .map((l) => l.trim())
+                .filter((l) => l)
             this.log.info(`Found ${paneLines.length} pane(s) from list-panes`)
 
             const newPaneIds: Array<{ paneId: number; windowId: number }> = []
@@ -653,7 +661,7 @@ export class TmuxController {
                         windowState = {
                             id: windowId,
                             name: `Window ${windowId}`,
-                            panes: new Set()
+                            panes: new Set(),
                         }
                         this.windowStates.set(windowId, windowState)
                         this.events.next({ type: 'window-add', windowId })
@@ -736,7 +744,7 @@ export class TmuxController {
         windowId: number,
         layout: string,
         visibleLayout?: string,
-        zoomed?: boolean
+        zoomed?: boolean,
     ): Promise<void> {
         // Extract pane IDs from layout strings.
         // When zoomed, the layout only contains the zoomed pane — also scan
@@ -791,13 +799,17 @@ export class TmuxController {
                     this.paneSessions.delete(paneId)
                 }
                 this.pendingPaneOutput.delete(paneId)
-                this.log.info(`Removed closed pane %${paneId} from window @${windowId} (not in layout)`)
+                this.log.info(
+                    `Removed closed pane %${paneId} from window @${windowId} (not in layout)`,
+                )
                 this.events.next({ type: 'pane-close', paneId, windowId })
             }
         }
 
         if (newPaneIds.length > 0) {
-            this.log.info(`Discovered ${newPaneIds.length} new pane(s) from layout-change for window @${windowId}`)
+            this.log.info(
+                `Discovered ${newPaneIds.length} new pane(s) from layout-change for window @${windowId}`,
+            )
 
             // Capture history + state for new panes (same as discoverWindowsAndPanes Step 3)
             const captured = await this.capturePaneSnapshots(newPaneIds)
@@ -834,14 +846,20 @@ export class TmuxController {
         // create views for newly discovered panes. This ordering is critical:
         // pane-add → handlePaneAdd (creates pane tab) → layout-change →
         // syncLayout (attaches view + builds SplitTree).
-        this.events.next({ type: 'layout-change', windowId, data: { layout, visibleLayout, zoomed } })
+        this.events.next({
+            type: 'layout-change',
+            windowId,
+            data: { layout, visibleLayout, zoomed },
+        })
     }
 
     /**
      * Capture history + state for an array of panes.
      * Shared by discoverWindowsAndPanes() and discoverPanesFromLayout().
      */
-    private async capturePaneSnapshots(paneIds: Array<{ paneId: number; windowId: number }>): Promise<boolean> {
+    private async capturePaneSnapshots(
+        paneIds: Array<{ paneId: number; windowId: number }>,
+    ): Promise<boolean> {
         // Guard: capturing history/screen before any client size has been
         // pushed (refresh-client -C) uses tmux's stale pre-attach window size,
         // and restoring that into the correctly-sized xterm mis-wraps history
@@ -853,7 +871,9 @@ export class TmuxController {
         // Returns false so the caller can roll back and let a later discover
         // (after the size push) re-capture these panes.
         if (!this.hasClientSizePushed) {
-            this.log.warn(`Skipping history capture for ${paneIds.length} pane(s): client size not pushed yet`)
+            this.log.warn(
+                `Skipping history capture for ${paneIds.length} pane(s): client size not pushed yet`,
+            )
             return false
         }
         const stateFormat = [
@@ -883,15 +903,15 @@ export class TmuxController {
                 const [history, altHistory, stateResult] = await Promise.all([
                     this.gateway.sendCommand(
                         `capture-pane -peqJN -S- -t %${paneId}`,
-                        TMUX_COMMAND_TOLERATE_ERRORS
+                        TMUX_COMMAND_TOLERATE_ERRORS,
                     ),
                     this.gateway.sendCommand(
                         `capture-pane -peqJN -a -S- -t %${paneId}`,
-                        TMUX_COMMAND_TOLERATE_ERRORS
+                        TMUX_COMMAND_TOLERATE_ERRORS,
                     ),
                     this.gateway.sendCommand(
                         `list-panes -t %${paneId} -F "${stateFormat}"`,
-                        TMUX_COMMAND_TOLERATE_ERRORS
+                        TMUX_COMMAND_TOLERATE_ERRORS,
                     ),
                 ])
                 const state = this.parsePaneState(stateResult, paneId)
@@ -903,8 +923,6 @@ export class TmuxController {
         await Promise.all(captures)
         return true
     }
-
-
 
     // --- Pane Management ---
 
@@ -949,10 +967,9 @@ export class TmuxController {
         // This affects all panes uniformly in non-variable-size mode
         // Note: paneId is ignored as tmux control mode uses uniform size
         this.clientRows = rows
-        this.gateway.sendCommand(
-            `refresh-client -C ${columns},${rows}`,
-            TMUX_COMMAND_TOLERATE_ERRORS
-        ).catch(e => this.logger.warn('Resize failed:', e))
+        this.gateway
+            .sendCommand(`refresh-client -C ${columns},${rows}`, TMUX_COMMAND_TOLERATE_ERRORS)
+            .catch((e) => this.logger.warn('Resize failed:', e))
     }
 
     writeToPane(paneId: number, data: Buffer): void {
@@ -1021,9 +1038,7 @@ export class TmuxController {
             const rows = state.rows
             if (rows && rows > 0 && lines.length > rows) {
                 const screenStart = lines.length - rows
-                primary = lines
-                    .filter((l, i) => i >= screenStart || l.trim() !== '')
-                    .join('\n')
+                primary = lines.filter((l, i) => i >= screenStart || l.trim() !== '').join('\n')
             } else {
                 primary = lines.join('\n')
             }
@@ -1066,10 +1081,9 @@ export class TmuxController {
             // Re-apply cursor position after content write (content may
             // have moved the cursor via embedded CUP sequences).
             const csi = (s: string) => `\x1b[${s}`
-            session.feedOutput(Buffer.from(
-                csi(`${state.cursorY + 1};${state.cursorX + 1}H`),
-                'utf-8'
-            ))
+            session.feedOutput(
+                Buffer.from(csi(`${state.cursorY + 1};${state.cursorX + 1}H`), 'utf-8'),
+            )
 
             // Save alternate screen data for re-apply after xterm.resize()
             // (called by setTmuxGrid).  xterm.resize() clears the alternate
@@ -1139,9 +1153,10 @@ export class TmuxController {
                 // prompt instead. If the user was genuinely editing at column
                 // 0 the cursor jumps to end-of-line, which is acceptable on
                 // restore.
-                const x = state.cursorX > 0
-                    ? Math.max(0, Math.min(state.cursorX, Math.max(visible, 0)))
-                    : Math.max(0, Math.max(visible, 0))
+                const x =
+                    state.cursorX > 0
+                        ? Math.max(0, Math.min(state.cursorX, Math.max(visible, 0)))
+                        : Math.max(0, Math.max(visible, 0))
                 session.feedOutput(Buffer.from(`\x1b[${y + 1};${x + 1}H`, 'utf-8'))
             }
         }
@@ -1176,7 +1191,11 @@ export class TmuxController {
 
         // Count how many lines directly above `tail` are identical to it.
         let sameStart = tail - 1
-        while (sameStart >= 0 && lines[sameStart] === lines[tail] && lines[sameStart].trim() !== '') {
+        while (
+            sameStart >= 0 &&
+            lines[sameStart] === lines[tail] &&
+            lines[sameStart].trim() !== ''
+        ) {
             sameStart--
         }
         const redundant = tail - sameStart - 1
@@ -1193,13 +1212,19 @@ export class TmuxController {
     private parsePaneState(response: string, expectedPaneId: number): PaneState {
         const state: PaneState = {
             paneId: expectedPaneId,
-            cursorX: 0, cursorY: 0,
+            cursorX: 0,
+            cursorY: 0,
             alternateOn: false,
-            alternateSavedX: 0, alternateSavedY: 0,
-            scrollRegionUpper: 0, scrollRegionLower: 0,
-            wrapFlag: true, cursorFlag: true,
-            insertFlag: false, bracketPasteFlag: false,
-            keypadCursorFlag: false, keypadFlag: false,
+            alternateSavedX: 0,
+            alternateSavedY: 0,
+            scrollRegionUpper: 0,
+            scrollRegionLower: 0,
+            wrapFlag: true,
+            cursorFlag: true,
+            insertFlag: false,
+            bracketPasteFlag: false,
+            keypadCursorFlag: false,
+            keypadFlag: false,
             paneTabs: [],
             mouseStandardMode: false,
             mouseButtonMode: false,
@@ -1224,7 +1249,7 @@ export class TmuxController {
         // Fallback: if no exact match found, use the first line with pane_id
         // (happens when list-panes returns only the target pane)
         if (!targetLine) {
-            targetLine = lines.find(l => l.includes('pane_id=')) || ''
+            targetLine = lines.find((l) => l.includes('pane_id=')) || ''
         }
         if (!targetLine) return state
 
@@ -1235,25 +1260,66 @@ export class TmuxController {
             const value = part.substring(eqIdx + 1)
             const n = parseInt(value)
             switch (key) {
-                case 'pane_id': state.paneId = n; break
-                case 'cursor_x': state.cursorX = n; break
-                case 'cursor_y': state.cursorY = n; break
-                case 'alternate_on': state.alternateOn = n === 1; break
-                case 'alternate_saved_x': state.alternateSavedX = n; break
-                case 'alternate_saved_y': state.alternateSavedY = n; break
-                case 'scroll_region_upper': state.scrollRegionUpper = n; break
-                case 'scroll_region_lower': state.scrollRegionLower = n; break
-                case 'pane_tabs': state.paneTabs = value.split(',').map(Number).filter(x => !isNaN(x)); break
-                case 'cursor_flag': state.cursorFlag = n === 1; break
-                case 'insert_flag': state.insertFlag = n === 1; break
-                case 'keypad_cursor_flag': state.keypadCursorFlag = n === 1; break
-                case 'keypad_flag': state.keypadFlag = n === 1; break
-                case 'wrap_flag': state.wrapFlag = n === 1; break
-                case 'bracket_paste_flag': state.bracketPasteFlag = n === 1; break
-                case 'mouse_standard_flag': state.mouseStandardMode = n === 1; break
-                case 'mouse_button_flag': state.mouseButtonMode = n === 1; break
-                case 'mouse_any_flag': state.mouseAnyMode = n === 1; break
-                case 'pane_height': if (!isNaN(n)) state.rows = n; break
+                case 'pane_id':
+                    state.paneId = n
+                    break
+                case 'cursor_x':
+                    state.cursorX = n
+                    break
+                case 'cursor_y':
+                    state.cursorY = n
+                    break
+                case 'alternate_on':
+                    state.alternateOn = n === 1
+                    break
+                case 'alternate_saved_x':
+                    state.alternateSavedX = n
+                    break
+                case 'alternate_saved_y':
+                    state.alternateSavedY = n
+                    break
+                case 'scroll_region_upper':
+                    state.scrollRegionUpper = n
+                    break
+                case 'scroll_region_lower':
+                    state.scrollRegionLower = n
+                    break
+                case 'pane_tabs':
+                    state.paneTabs = value
+                        .split(',')
+                        .map(Number)
+                        .filter((x) => !isNaN(x))
+                    break
+                case 'cursor_flag':
+                    state.cursorFlag = n === 1
+                    break
+                case 'insert_flag':
+                    state.insertFlag = n === 1
+                    break
+                case 'keypad_cursor_flag':
+                    state.keypadCursorFlag = n === 1
+                    break
+                case 'keypad_flag':
+                    state.keypadFlag = n === 1
+                    break
+                case 'wrap_flag':
+                    state.wrapFlag = n === 1
+                    break
+                case 'bracket_paste_flag':
+                    state.bracketPasteFlag = n === 1
+                    break
+                case 'mouse_standard_flag':
+                    state.mouseStandardMode = n === 1
+                    break
+                case 'mouse_button_flag':
+                    state.mouseButtonMode = n === 1
+                    break
+                case 'mouse_any_flag':
+                    state.mouseAnyMode = n === 1
+                    break
+                case 'pane_height':
+                    if (!isNaN(n)) state.rows = n
+                    break
             }
         }
         return state
@@ -1320,7 +1386,7 @@ export class TmuxController {
             seq += csi('3g')
             for (const col of state.paneTabs) {
                 seq += csi(`${col + 1}G`) // CUP to column
-                seq += esc('H')           // HTS
+                seq += esc('H') // HTS
             }
         }
 
@@ -1360,10 +1426,7 @@ export class TmuxController {
 
         // Re-apply cursor position
         const csi = (s: string) => `\x1b[${s}`
-        session.feedOutput(Buffer.from(
-            csi(`${alt.cursorY + 1};${alt.cursorX + 1}H`),
-            'utf-8'
-        ))
+        session.feedOutput(Buffer.from(csi(`${alt.cursorY + 1};${alt.cursorX + 1}H`), 'utf-8'))
     }
 
     async killPane(paneId: number): Promise<void> {
@@ -1375,10 +1438,7 @@ export class TmuxController {
      * When zoomed, the pane fills the entire window; other panes are hidden.
      */
     async zoomPane(paneId: number): Promise<void> {
-        await this.gateway.sendCommand(
-            `resize-pane -Z -t %${paneId}`,
-            TMUX_COMMAND_TOLERATE_ERRORS
-        )
+        await this.gateway.sendCommand(`resize-pane -Z -t %${paneId}`, TMUX_COMMAND_TOLERATE_ERRORS)
     }
 
     // --- Window Operations ---

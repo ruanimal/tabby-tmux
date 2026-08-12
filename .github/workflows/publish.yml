@@ -1,72 +1,72 @@
 name: Publish to npm
 
 on:
-  push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to publish (leave empty to use package.json version)'
-        required: false
-        default: ''
+    push:
+        tags:
+            - 'v*'
+    workflow_dispatch:
+        inputs:
+            version:
+                description: 'Version to publish (leave empty to use package.json version)'
+                required: false
+                default: ''
 
 permissions:
-  id-token: write  # Required for OIDC
-  contents: write  # Required to create GitHub Release
+    id-token: write # Required for OIDC
+    contents: write # Required to create GitHub Release
 
 jobs:
-  publish:
-    runs-on: ubuntu-latest
+    publish:
+        runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Fetch full history so the changelog can diff against the previous tag
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0 # Fetch full history so the changelog can diff against the previous tag
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: '24'
+                  registry-url: 'https://registry.npmjs.org'
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+              with:
+                  version: 11
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
 
-      - name: Build
-        run: pnpm run build
+            - name: Build
+              run: pnpm run build
 
-      - name: Publish to npm
-        run: pnpm publish --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+            - name: Publish to npm
+              run: pnpm publish --no-git-checks
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Generate commit changelog
-        run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
-          {
-            echo "## Commits"
-            echo ""
-            if [ -n "$PREV_TAG" ]; then
-              echo "Changes since \`$PREV_TAG\`:"
-              echo ""
-              git log --pretty=format:'- %s (%h)' "$PREV_TAG"..HEAD
-            else
-              echo "No previous tag found; listing all commits:"
-              echo ""
-              git log --pretty=format:'- %s (%h)' HEAD
-            fi
-          } > CHANGELOG.md
+            - name: Generate commit changelog
+              run: |
+                  PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+                  {
+                    echo "## Commits"
+                    echo ""
+                    if [ -n "$PREV_TAG" ]; then
+                      echo "Changes since \`$PREV_TAG\`:"
+                      echo ""
+                      git log --pretty=format:'- %s (%h)' "$PREV_TAG"..HEAD
+                    else
+                      echo "No previous tag found; listing all commits:"
+                      echo ""
+                      git log --pretty=format:'- %s (%h)' HEAD
+                    fi
+                  } > CHANGELOG.md
 
-      - name: Create GitHub Release with changelog
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          body_path: CHANGELOG.md
-          generate_release_notes: true  # Fallback when CHANGELOG.md is empty
+            - name: Create GitHub Release with changelog
+              if: startsWith(github.ref, 'refs/tags/')
+              uses: softprops/action-gh-release@v2
+              with:
+                  body_path: CHANGELOG.md
+                  generate_release_notes: true # Fallback when CHANGELOG.md is empty

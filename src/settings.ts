@@ -9,7 +9,7 @@ export class TmuxSettingsTabProvider extends SettingsTabProvider {
     icon = 'border-all'
     title = 'Tmux'
 
-    getComponentType (): any {
+    getComponentType(): any {
         return TmuxSettingsTabComponent
     }
 }

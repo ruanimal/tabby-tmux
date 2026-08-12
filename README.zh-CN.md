@@ -43,7 +43,7 @@ npm install tabby-tmux
 
 ### 右键行为
 
-默认情况下，在 tmux pane 内右键会直接弹出 **tmux pane 上下文菜单**（用于 *Enter/Exit Tmux Mode*、*New Window* 等操作），而**不会**遵循 Tabby 的 *Settings → Terminal → "On right-click"* 设置。
+默认情况下，在 tmux pane 内右键会直接弹出 **tmux pane 上下文菜单**（用于 _Enter/Exit Tmux Mode_、_New Window_ 等操作），而**不会**遵循 Tabby 的 _Settings → Terminal → "On right-click"_ 设置。
 
 如果你在 Tabby 设置中将 **"On right-click"** 改为 `Paste` 或 `Clipboard`，本插件会尊重该选择：
 

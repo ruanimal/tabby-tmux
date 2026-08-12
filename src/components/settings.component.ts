@@ -9,39 +9,55 @@ import { ConfigService } from 'tabby-core'
             <div class="tmux-table">
                 <div class="row">
                     <div class="header"><div class="title">Default session name:</div></div>
-                    <input class="form-control" type="text"
+                    <input
+                        class="form-control"
+                        type="text"
                         [(ngModel)]="config.store.tmuxPlugin.defaultSessionName"
-                        (ngModelChange)="config.save()">
+                        (ngModelChange)="config.save()"
+                    />
                 </div>
                 <div class="row">
                     <div class="header"><div class="title">Command timeout (ms):</div></div>
-                    <input class="form-control" type="number"
+                    <input
+                        class="form-control"
+                        type="number"
                         [(ngModel)]="config.store.tmuxPlugin.commandTimeoutMs"
-                        (ngModelChange)="config.save()">
+                        (ngModelChange)="config.save()"
+                    />
                 </div>
                 <div class="row">
                     <div class="header"><div class="title">Send-keys chunk size:</div></div>
-                    <input class="form-control" type="number"
+                    <input
+                        class="form-control"
+                        type="number"
                         [(ngModel)]="config.store.tmuxPlugin.sendKeysChunkSize"
-                        (ngModelChange)="config.save()">
+                        (ngModelChange)="config.save()"
+                    />
                 </div>
                 <div class="row">
                     <div class="header"><div class="title">Resize debounce (ms):</div></div>
-                    <input class="form-control" type="number"
+                    <input
+                        class="form-control"
+                        type="number"
                         [(ngModel)]="config.store.tmuxPlugin.resizeDebounceMs"
-                        (ngModelChange)="config.save()">
+                        (ngModelChange)="config.save()"
+                    />
                 </div>
                 <div class="row">
                     <div class="header"><div class="title">Debug logging:</div></div>
-                    <input type="checkbox"
+                    <input
+                        type="checkbox"
                         [(ngModel)]="config.store.tmuxPlugin.debugLogging"
-                        (ngModelChange)="config.save()">
+                        (ngModelChange)="config.save()"
+                    />
                 </div>
                 <div class="row">
                     <div class="header"><div class="title">Show close button on tabs:</div></div>
-                    <input type="checkbox"
+                    <input
+                        type="checkbox"
                         [(ngModel)]="config.store.tmuxPlugin.showWindowCloseButton"
-                        (ngModelChange)="config.save()">
+                        (ngModelChange)="config.save()"
+                    />
                 </div>
             </div>
         </div>
@@ -49,5 +65,5 @@ import { ConfigService } from 'tabby-core'
     styles: [require('./settings.component.scss')],
 })
 export class TmuxSettingsTabComponent {
-    constructor (public config: ConfigService) { }
+    constructor(public config: ConfigService) {}
 }
