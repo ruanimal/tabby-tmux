@@ -1301,6 +1301,20 @@ export class TmuxController {
         return Array.from(this.windowStates.values())
     }
 
+    /**
+     * Number of panes in the window that owns the given pane (0 when the
+     * pane is not tracked). Used to disable zoom toggling on single-pane
+     * windows, where tmux's resize-pane -Z is a no-op (command fails).
+     */
+    getWindowPaneCount(paneId: number): number {
+        for (const state of this.windowStates.values()) {
+            if (state.panes.has(paneId)) {
+                return state.panes.size
+            }
+        }
+        return 0
+    }
+
     getFirstWindowId(): number | undefined {
         const first = this.windowStates.keys().next()
         return first.done ? undefined : first.value

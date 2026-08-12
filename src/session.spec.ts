@@ -243,6 +243,55 @@ describe('TmuxController', () => {
         expect(controller.getActiveWindowId()).toBe(0)
         expect(controller.getFirstWindowId()).toBe(0)
     })
+
+    it('tracks the zoomed pane from %layout-change and clears it on unzoom', async () => {
+        const { controller } = createController()
+        await initController(controller)
+        controller.gateway.executeLine('%window-add @0')
+
+        // Two-pane window: 200x25,0,0,0 → %0 and 200x24,0,26,1 → %1
+        const layout = 'e553,200x50,0,0[200x25,0,0,0,200x24,0,26,1]'
+        const zoomedLayout = 'ac9d,200x50,0,0,0'
+
+        // Zoom %0 — visibleLayout is the single zoomed pane, flags *Z
+        controller.gateway.executeLine(`%layout-change @0 ${layout} ${zoomedLayout} *Z`)
+        expect(controller.getWindowState(0)?.zoomedPaneId).toBe(0)
+
+        // Unzoom — flags lose Z, zoomedPaneId clears
+        controller.gateway.executeLine(`%layout-change @0 ${layout} ${layout} *`)
+        expect(controller.getWindowState(0)?.zoomedPaneId).toBeUndefined()
+
+        // Multi-digit pane ids are parsed correctly
+        controller.gateway.executeLine(`%layout-change @0 ${layout} ac9e,200x50,0,0,10 *Z`)
+        expect(controller.getWindowState(0)?.zoomedPaneId).toBe(10)
+
+        // Let the async layout discovery settle (capture commands time out
+        // after commandTimeoutMs=30 and are swallowed by their try/catch).
+        await new Promise((resolve) => setTimeout(resolve, 80))
+    })
+
+    it('reports the pane count of the owning window for the zoom toggle', async () => {
+        const { controller } = createController()
+        controller.setClientSizePushed()
+        await initController(controller)
+        controller.gateway.executeLine('%window-add @0')
+        expect(controller.getWindowPaneCount(9)).toBe(0)
+
+        // Two-pane layout: 200x25,0,0,0 → %0 and 200x24,0,26,1 → %1
+        const layout = 'e553,200x50,0,0[200x25,0,0,0,200x24,0,26,1]'
+        controller.gateway.executeLine(`%layout-change @0 ${layout} ${layout} *`)
+        expect(controller.getWindowPaneCount(0)).toBe(2)
+        expect(controller.getWindowPaneCount(1)).toBe(2)
+        expect(controller.getWindowPaneCount(42)).toBe(0)
+
+        // A single-pane window reports 1 — the zoom toggle gets disabled.
+        // Layout leaf format is checksum,WxH,X,Y,paneId (e.g. aa,80x24,0,0,5).
+        controller.gateway.executeLine('%window-add @1')
+        controller.gateway.executeLine('%layout-change @1 aa,80x24,0,0,5 aa,80x24,0,0,5 *')
+        expect(controller.getWindowPaneCount(5)).toBe(1)
+
+        await new Promise((resolve) => setTimeout(resolve, 80))
+    })
 })
 
 async function waitForWrite(

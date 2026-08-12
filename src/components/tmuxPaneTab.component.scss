@@ -80,3 +80,32 @@
 :host ::ng-deep .tmux-pane-scrollbar.visible .tmux-pane-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.45);
 }
+
+/* Zoom indicator — a chip pinned to the zoomed pane's top-right corner.
+ * Visible only while the pane is zoomed (created/removed by
+ * TmuxPaneTabComponent.updateZoomIndicator()); clicking it exits zoom.
+ * ::ng-deep is REQUIRED — the element is created via
+ * document.createElement(), so it carries no Angular _ngcontent attribute. */
+:host ::ng-deep .tmux-pane-zoom-indicator {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1;
+    color: rgba(255, 255, 255, 0.92);
+    background: rgba(0, 0, 0, 0.55);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s ease;
+}
+:host ::ng-deep .tmux-pane-zoom-indicator:hover {
+    background: rgba(0, 0, 0, 0.8);
+}

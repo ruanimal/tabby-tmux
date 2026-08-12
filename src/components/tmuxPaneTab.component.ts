@@ -62,6 +62,8 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     private _scrollbarResizeObserver: ResizeObserver | null = null
     private _scrollbarHideTimer: ReturnType<typeof setTimeout> | null = null
     private _scrollbarDragging = false
+    /** "Exit zoom" chip shown in the pane's top-right corner while zoomed. */
+    private _zoomIndicator: HTMLElement | null = null
 
     constructor(injector: Injector) {
         super(injector)
@@ -397,6 +399,8 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         this._scrollbarTrack = null
         this._scrollbarThumb = null
         this._scrollbarViewport = null
+        this._zoomIndicator?.remove()
+        this._zoomIndicator = null
         super.ngOnDestroy()
     }
 
@@ -497,6 +501,10 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
                 label: this.translate.instant('Zoom pane'),
                 type: 'checkbox',
                 checked: this._isZoomed,
+                // tmux resize-pane -Z on a single-pane window is a no-op
+                // (the command fails), so disable the toggle unless there
+                // is another pane to zoom to/from.
+                enabled: this._isZoomed || this._windowPaneCount !== 1,
                 click: () => this.toggleZoom(),
             },
             {
@@ -541,10 +549,61 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         return false
     }
 
+    /**
+     * Number of panes in the window that owns this pane (0 when the pane is
+     * not yet tracked). tmux's resize-pane -Z is a no-op on single-pane
+     * windows, so the zoom toggle must be disabled when this is 1.
+     */
+    get _windowPaneCount(): number {
+        if (!this.controller || !this.paneId) return 0
+        return this.controller.getWindowPaneCount(this.paneId)
+    }
+
     /** Toggle zoom via tmux resize-pane -Z (same as prefix+z). */
     private async toggleZoom(): Promise<void> {
         if (!this.controller) return
         await this.controller.zoomPane(this.paneId)
+    }
+
+    /**
+     * Zoom indicator button — an "Exit zoom" chip pinned to the top-right
+     * corner of the pane while it is zoomed. Clicking it un-zooms.
+     *
+     * Zoom state lives in the controller and only changes with
+     * %layout-change, so the session tab calls this after every layout
+     * sync / window switch to keep the button in sync with tmux.
+     */
+    updateZoomIndicator(): void {
+        const isZoomed = this._isZoomed
+        if (isZoomed && !this._zoomIndicator) {
+            this.createZoomIndicator()
+        } else if (!isZoomed && this._zoomIndicator) {
+            this._zoomIndicator.remove()
+            this._zoomIndicator = null
+        }
+    }
+
+    private createZoomIndicator(): void {
+        const indicator = document.createElement('div')
+        indicator.className = 'tmux-pane-zoom-indicator'
+        indicator.title = this.translate.instant('Exit zoom')
+        indicator.textContent = this.translate.instant('Exit zoom')
+
+        // Keep the click away from the pane: mousedown would otherwise
+        // focus/select inside the xterm, and the click would bubble to the
+        // host's focus-pane handler and issue a redundant select-pane.
+        indicator.addEventListener('mousedown', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+        })
+        indicator.addEventListener('click', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            this.toggleZoom()
+        })
+
+        this._paneHost.appendChild(indicator)
+        this._zoomIndicator = indicator
     }
 
     private async splitPane(direction: 'right' | 'down' | 'left' | 'up'): Promise<void> {

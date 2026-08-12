@@ -582,6 +582,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
         // 7. Detect changes and push size
         this.cdr.detectChanges()
+        this.updateZoomIndicators()
 
         if (paneTabs.length > 0) {
             // Refresh the client size after mounting panes. The dedup
@@ -1067,6 +1068,22 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         this.updateDividers(displayTree)
 
         this.cdr.detectChanges()
+
+        // Refresh the zoom indicator chips after any layout change — zoom
+        // state (zoomedPaneId) only changes via %layout-change.
+        this.updateZoomIndicators()
+    }
+
+    /**
+     * Refresh the "Exit zoom" indicator on every pane tab. The zoomed pane
+     * shows the chip in its top-right corner; all others hide it.
+     */
+    private updateZoomIndicators(): void {
+        for (const paneMap of this.windowPaneTabs.values()) {
+            for (const paneTab of paneMap.values()) {
+                paneTab.updateZoomIndicator()
+            }
+        }
     }
 
     /**
