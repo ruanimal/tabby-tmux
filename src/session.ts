@@ -337,6 +337,22 @@ export class TmuxController {
     private clientSizePushed = false
 
     /**
+     * In-flight discover promise (single-flight guard).
+     *
+     * discoverWindowsAndPanes is reached from four independent paths that all
+     * fire during attach: gateway `initialized$`, `sessionChanged$`,
+     * `windowAdd$`, and SessionTab Step B `refreshPanes()`. Without dedup,
+     * each path enqueues its own list-windows + list-panes into the gateway
+     * commandQueue even when a discover is already running — the extra command
+     * round-trips block the serial queue and stall the first real capture (the
+     * one that passes the clientSizePushed guard). The single-flight guard
+     * makes all four paths share the SAME in-flight Promise so only one batch
+     * of list-windows/list-panes is ever in the queue; callers that arrive
+     * mid-flight await the running result instead of starting a parallel scan.
+     */
+    private discoveringPromise: Promise<void> | null = null
+
+    /**
      * Last client size pushed to tmux (refresh-client -C). Rows is needed by
      * restorePaneHistory() to map a history line index to an xterm screen row
      * (lines scroll off when the written content exceeds the screen height).
@@ -414,7 +430,19 @@ export class TmuxController {
             // The window-add event has already been emitted above, so the UI
             // has registered the window. discoverWindowsAndPanes will update
             // the windowState with layout and emit pane-add + layout-change.
-            this.discoverWindowsAndPanes()
+            //
+            // Single-flight caveat: if a discover is already running (e.g.
+            // another window-add or an attach-phase discover), await its
+            // result, then re-check this window's panes — the in-flight
+            // discover's list-windows/list-panes may have executed before
+            // this window existed, leaving its panes empty. If still empty,
+            // kick off a follow-up discover (the guard is now clear).
+            this.discoverWindowsAndPanes().then(() => {
+                const state = this.windowStates.get(windowId)
+                if (state && state.panes.size === 0) {
+                    this.discoverWindowsAndPanes()
+                }
+            })
         })
 
         this.gateway.windowClose$.subscribe(windowId => {
@@ -551,6 +579,17 @@ export class TmuxController {
      * is needed at the session level.
      */
     private async discoverWindowsAndPanes(): Promise<void> {
+        // Single-flight: if a discover is already running, await its result
+        // instead of starting a second parallel scan. See discoveringPromise.
+        if (this.discoveringPromise) {
+            return this.discoveringPromise
+        }
+        this.discoveringPromise = this.runDiscoverWindowsAndPanes()
+            .finally(() => { this.discoveringPromise = null })
+        return this.discoveringPromise
+    }
+
+    private async runDiscoverWindowsAndPanes(): Promise<void> {
         this.log.info('Batch discovering windows and panes...')
         try {
             // Step 1: Discover all windows with names, layout and active flag

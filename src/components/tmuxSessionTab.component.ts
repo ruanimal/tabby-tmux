@@ -197,20 +197,35 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         requestAnimationFrame(async () => {
             this._initialized = true
 
-            // ── Step A: Disable tmux pane borders + push client size FIRST ──
-            // tmux draws box-drawing characters in pane borders by default.
-            // We draw our own CSS dividers instead, so disable tmux's borders
-            // to avoid double-rendering (the border chars would show through
-            // our transparent divider elements).
-            // Then push client size so tmux relays out without border space.
-            this.controller!.gateway.sendCommand(
-                'set-option -gw pane-border-lines off',
-                TMUX_COMMAND_TOLERATE_ERRORS,
-            ).catch(() => { /* older tmux may not support this option */ })
+            // ── Step A: Push client size FIRST ──
+            // tmux may start with a stale client size from a previous attach.
+            // Tell tmux our actual size before discovering panes, so the
+            // layout-change events carry coordinates matching our window.
+            //
+            // Note: pane borders are NOT suppressed here. In control mode,
+            // tmux's pane-border render is purely internal — border characters
+            // never reach the client via %output or capture-pane (those streams
+            // carry only each pane's own program output, not tmux's drawn UI).
+            // The previous `set-option -gw pane-border-lines off` was a no-op
+            // against this architecture ("off" is also an illegal enum value in
+            // tmux 3.x, so it emitted %error on every entry and stalled the
+            // command queue for several seconds). CSS .tmux-divider elements
+            // are the sole source of visible separators.
             this.refreshClientSize()
             await this.eventQueue
 
             // ── Step B: Pane discovery (now based on correct size) ──
+            // refreshPanes() sends list-windows + list-panes + capture-pane.
+            // tmux serializes these behind the relayout triggered by the
+            // refresh-client -C above, so this await naturally waits for tmux
+            // to finish relaying-out every window — that wait is unavoidable
+            // (tmux processes commands serially). Using layout-change-driven
+            // discovery instead was tried but broke the pane-add → create tab →
+            // start() → restorePaneHistory(snapshot) ordering: bootstrap built
+            // pane tabs before capture-pane populated pendingSnapshots, so
+            // restorePaneHistory found empty snapshots and panes showed no
+            // prompt. Keeping refreshPanes() preserves the capture-then-
+            // pane-add ordering that pendingSnapshots depends on.
             await this.controller!.refreshPanes()
             this.bootstrapFromControllerState()
             await this.eventQueue
