@@ -159,6 +159,15 @@ describe('TmuxGateway executeLine notifications', () => {
         expect(outputs[0].data.toString('utf-8')).toBe('中')
     })
 
+    it('decodes 4-byte UTF-8 surrogate pairs (Nerd Fonts v3 / emojis) in %output', async () => {
+        const { gateway } = createGateway()
+        await initGateway(gateway)
+        const outputs: { paneId: number; data: Buffer }[] = []
+        gateway.output$.subscribe((o) => outputs.push(o))
+        gateway.executeLine('%output %1 󰀁 🚀')
+        expect(outputs[0].data.toString('utf-8')).toBe('󰀁 🚀')
+    })
+
     it('parses %extended-output with latency in seconds', async () => {
         const { gateway } = createGateway()
         await initGateway(gateway)
