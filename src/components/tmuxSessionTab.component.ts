@@ -57,7 +57,7 @@ export interface TmuxSessionProfile {
         <tmux-window-bar
             [controller]="controller"
             [activeWindowId]="activeWindowId"
-            (windowSwitch)="enqueueSwitchToWindow($event)"
+            (windowSwitch)="enqueueSwitchToWindow($event, true)"
             (windowClose)="onWindowClose($event)"
             (disconnect)="onDisconnect()"
             (createWindow)="onCreateWindow()"
@@ -436,10 +436,16 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * active-pane-changed → handleActivePaneChanged), which caused focus
      * thrash: restores and pane-changed responses kept overwriting each
      * other and firing select-pane repeatedly.
+     *
+     * `syncToTmux` is true only for USER-INITIATED switches (window bar
+     * clicks): the switch is then also sent to tmux via select-window so the
+     * tmux-side active window follows the UI. Internal switches (bootstrap,
+     * window-add events, the initial ngAfterViewInit switch, close fallbacks)
+     * leave it false — they follow tmux instead of leading it.
      */
-    enqueueSwitchToWindow(windowId: number): void {
+    enqueueSwitchToWindow(windowId: number, syncToTmux = false): void {
         this.eventQueue = this.eventQueue
-            .then(() => this.switchToWindow(windowId))
+            .then(() => this.switchToWindow(windowId, syncToTmux))
             .catch((err) => this.logger.warn('switchToWindow failed:', err))
     }
 
@@ -447,8 +453,23 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * Switch to a different tmux window.
      * Hides current window's panes and shows target window's panes.
      */
-    async switchToWindow(windowId: number): Promise<void> {
-        if (windowId === this.activeWindowId) return
+    async switchToWindow(windowId: number, syncToTmux = false): Promise<void> {
+        if (windowId === this.activeWindowId) {
+            // User clicked the ALREADY-active window tab. UI and tmux may still
+            // be out of sync (tmux's active window changed on another client,
+            // or attach restored a different window) — a user-initiated click
+            // must re-align tmux anyway, so still send select-window. It is a
+            // no-op on the tmux side and only re-emits %session-window-changed
+            // (which has no SessionTab event case, so no feedback loop).
+            if (syncToTmux && this.controller) {
+                this.controller.gateway
+                    .sendCommand(`select-window -t @${windowId}`, TMUX_COMMAND_TOLERATE_ERRORS)
+                    .catch(() => {
+                        /* tmux may reject during detach */
+                    })
+            }
+            return
+        }
 
         this.logger.info(`Switching to window @${windowId}`)
 
@@ -471,6 +492,26 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
         // 2. Update active window
         this.activeWindowId = windowId
+
+        // Sync a USER-INITIATED window switch to tmux via select-window, so the
+        // tmux-side active window follows the window bar. Without this, tmux
+        // keeps its stale active window (typically the last window created,
+        // which tmux auto-activates) while the UI shows another one — on
+        // re-attach the session restores tmux's stale active window instead of
+        // the window the user was actually looking at.
+        //
+        // select-window replies with %session-window-changed, which only
+        // updates controller.activeWindowId (there is no SessionTab event case
+        // for it), so no feedback loop forms. Internal restore paths
+        // (bootstrap, window-add, initial switch) must NOT sync — they follow
+        // tmux instead of leading it.
+        if (syncToTmux && this.controller) {
+            this.controller.gateway
+                .sendCommand(`select-window -t @${windowId}`, TMUX_COMMAND_TOLERATE_ERRORS)
+                .catch(() => {
+                    /* tmux may reject during detach */
+                })
+        }
 
         // 3. Ensure pane tabs exist for this window
         if (!this.windowPaneTabs.has(windowId)) {
