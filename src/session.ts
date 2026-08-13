@@ -261,6 +261,15 @@ export type SyncScope = 'off' | 'window' | 'all'
 interface WindowState {
     id: number
     name: string
+    /**
+     * Window index as reported by list-windows #{window_index}. This is the
+     * order tmux displays windows in (0, 1, 2, ...), which is INDEPENDENT of
+     * the window ID — move-window / swap-window reorder indexes without
+     * changing IDs. Undefined until a list-windows has seen this window
+     * (e.g. a runtime %window-add notification before the next discover);
+     * such windows sort after all indexed ones.
+     */
+    index?: number
     layout?: string
     /** Saved layout when pane is zoomed (the real multi-pane layout) */
     visibleLayout?: string
@@ -587,8 +596,23 @@ export class TmuxController {
         this.log.info('Batch discovering windows and panes...')
         try {
             // Step 1: Discover all windows with names, layout and active flag
+            // NOTE: #{window_index} is captured explicitly — tmux's list-windows
+            // output order happens to be index order, but windowStates is a
+            // Map whose insertion order is ALSO fed by %window-add notifications
+            // (runtime windows, and attach on older tmux versions). Relying on
+            // insertion order made the window order unstable (move-window /
+            // swap-window reorder indexes without changing IDs). Sorting by
+            // index below (getAllWindowStates) makes the order deterministic.
+            //
+            // #{q:window_name} escapes shell-special characters with backslash
+            // (a space in a name becomes `\ `). Parsing the raw name with a
+            // plain space-split would misparse names containing "space+digit"
+            // (e.g. "foo 1"): the lazy name group would stop at the first
+            // space and the digit would be read as #{window_index} / #{window_active},
+            // corrupting the index order. The regex below treats `\X` as one
+            // name character and unescapes afterwards.
             const winResult = await this.gateway.sendCommand(
-                'list-windows -F "#{window_id} #{window_name} #{window_active} #{window_layout}"',
+                'list-windows -F "#{window_id} #{q:window_name} #{window_index} #{window_active} #{window_layout}"',
                 TMUX_COMMAND_TOLERATE_ERRORS,
             )
             const winLines = winResult
@@ -598,13 +622,17 @@ export class TmuxController {
             this.log.info(`Found ${winLines.length} window(s) from list-windows`)
 
             for (const line of winLines) {
-                // Format: "@0 mywindow 1 1234,0x0,0,0{60x24,0,0,1}"
-                const match = line.match(/^@?(\d+)\s+(.+?)\s+([01])\s+(.+)$/)
+                // Format: "@0 'my window' 0 1 1234,0x0,0,0{60x24,0,0,1}"
+                // Window name is #{q:}-escaped: a literal space inside the name
+                // is `\ `, so `(?:[^\\ ]|\\.)+` treats `\X` as a single name
+                // character and only stops at an UNescaped space.
+                const match = line.match(/^@?(\d+)\s+((?:[^\\ ]|\\.)+)\s+(\d+)\s+([01])\s+(.+)$/)
                 if (match) {
                     const windowId = parseInt(match[1])
-                    const windowName = match[2]
-                    const active = match[3] === '1'
-                    const layout = match[4]
+                    const windowName = match[2].replace(/\\(.)/g, '$1')
+                    const windowIndex = parseInt(match[3])
+                    const active = match[4] === '1'
+                    const layout = match[5]
                     if (active) {
                         this.activeWindowId = windowId
                     }
@@ -612,6 +640,7 @@ export class TmuxController {
                         this.windowStates.set(windowId, {
                             id: windowId,
                             name: windowName,
+                            index: windowIndex,
                             layout,
                             panes: new Set(),
                         })
@@ -619,6 +648,7 @@ export class TmuxController {
                     } else {
                         const state = this.windowStates.get(windowId)!
                         state.name = windowName
+                        state.index = windowIndex
                         state.layout = layout
                     }
                 }
@@ -1315,8 +1345,21 @@ export class TmuxController {
         return this.windowStates.get(windowId)
     }
 
+    /**
+     * All known window states in tmux's display order (window index
+     * ascending). The order is derived from #{window_index} (captured from
+     * list-windows), NOT from the Map insertion order — insertion order is
+     * fed by %window-add notifications and list-panes, neither of which is
+     * guaranteed to match the index order (move-window / swap-window reorder
+     * indexes without changing window IDs). Windows whose index is not yet
+     * known (runtime %window-add before the next list-windows) sort last,
+     * keeping the Map insertion order among themselves.
+     */
     getAllWindowStates(): WindowState[] {
-        return Array.from(this.windowStates.values())
+        return Array.from(this.windowStates.values()).sort(
+            (a, b) =>
+                (a.index ?? Number.MAX_SAFE_INTEGER) - (b.index ?? Number.MAX_SAFE_INTEGER),
+        )
     }
 
     /**
@@ -1334,8 +1377,7 @@ export class TmuxController {
     }
 
     getFirstWindowId(): number | undefined {
-        const first = this.windowStates.keys().next()
-        return first.done ? undefined : first.value
+        return this.getAllWindowStates()[0]?.id
     }
 
     /**

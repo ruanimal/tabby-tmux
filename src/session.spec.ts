@@ -231,7 +231,7 @@ describe('TmuxController', () => {
         await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-windows')))
         controller.gateway.executeData(
             Buffer.from(
-                '%begin 1 1 1\n@0 main 1 1234,80x24,0,0{40x24,0,0,1,40x24,41,0,2}\n%end 1\n',
+                '%begin 1 1 1\n@0 main 0 1 1234,80x24,0,0{40x24,0,0,1,40x24,41,0,2}\n%end 1\n',
             ),
         )
         await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-panes')))
@@ -242,6 +242,103 @@ describe('TmuxController', () => {
         expect(controller.getActivePaneId(0)).toBe(1)
         expect(controller.getActiveWindowId()).toBe(0)
         expect(controller.getFirstWindowId()).toBe(0)
+    })
+
+    it('orders windows by tmux index, not by Map insertion order', async () => {
+        const { controller, written } = createController()
+        controller.setClientSizePushed()
+
+        // %window-add notifications (runtime windows, and attach on older tmux
+        // versions) insert into the Map in ARRIVAL order, which is the window
+        // ID order — @7 before @5 here. tmux's real display order is the index
+        // order from list-windows (index 0 → @5, index 1 → @7). getAllWindowStates
+        // must follow the index, otherwise the window bar shows the wrong order.
+        controller.gateway.executeLine('%window-add @7')
+        controller.gateway.executeLine('%window-add @5')
+
+        const discover = controller.refreshPanes()
+        await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-windows')))
+        controller.gateway.executeData(
+            Buffer.from(
+                '%begin 1 1 1\n@5 main 0 1 1234,80x24,0,0\n@7 two 1 0 1235,80x24,0,0\n%end 1\n',
+            ),
+        )
+        await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-panes')))
+        controller.gateway.executeData(Buffer.from('%begin 1 2 1\n%1 @5 1\n%2 @7 0\n%end 2\n'))
+        await discover
+
+        // Insertion order is [7, 5]; index order is [5, 7].
+        expect(controller.getAllWindowStates().map((w) => w.id)).toEqual([5, 7])
+        expect(controller.getFirstWindowId()).toBe(5)
+        expect(controller.getWindowState(5)?.index).toBe(0)
+        expect(controller.getWindowState(7)?.index).toBe(1)
+    })
+
+    it('restores window order from a real attach message stream (index order)', async () => {
+        const { controller, written } = createController()
+        controller.setClientSizePushed()
+
+        // Real message stream captured from `tmux -CC attach` (tmux 3.5a) to a
+        // session whose windows are @0 idx0, @2 idx1, @1 idx2 (active). The DCS
+        // start (\x1bP1000p) prefixes the first message; ST (\x1b\\) only
+        // appears at session end, NOT after each message — an ST after the
+        // attach block would leak into the next executeData() chunk.
+        controller.gateway.executeData(
+            Buffer.from(
+                '\x1bP1000p%begin 1786610841 346 0\r\n' +
+                    '%end 1786610841 346 0\r\n' +
+                    '%session-changed $0 probe\r\n',
+            ),
+        )
+        await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-windows')))
+        controller.gateway.executeData(
+            Buffer.from(
+                '%begin 1786610843 350 1\r\n' +
+                    '@0 win0 0 0 b25d,80x24,0,0,0\r\n' +
+                    '@2 win2 1 0 b25f,80x24,0,0,2\r\n' +
+                    '@1 win1 2 1 b25e,80x24,0,0,1\r\n' +
+                    '%end 1786610843 350 1\r\n',
+            ),
+        )
+        await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-panes')))
+        controller.gateway.executeData(
+            Buffer.from('%begin 1 2 1\r\n%1 @0 1\r\n%2 @2 1\r\n%3 @1 1\r\n%end 2\r\n'),
+        )
+        await new Promise((r) => setTimeout(r, 20))
+
+        // Window order follows tmux INDEX order (@0, @2, @1), not Map
+        // insertion / window ID order (@0, @1, @2).
+        expect(controller.getAllWindowStates().map((w) => w.id)).toEqual([0, 2, 1])
+        expect(controller.getFirstWindowId()).toBe(0)
+        expect(controller.getActiveWindowId()).toBe(1)
+        expect(controller.getActivePaneId(0)).toBe(1)
+        expect(controller.getAllPaneIds()).toEqual([1, 2, 3])
+    })
+
+    it('parses q:-escaped window names containing spaces from list-windows', async () => {
+        const { controller, written } = createController()
+        controller.setClientSizePushed()
+
+        // tmux #{q:window_name} escapes a space in a name as `\ ` (e.g. "foo 1").
+        // A space+digit name must not be misparsed: the digit after the first
+        // unescaped space belongs to #{window_index}, not to the name.
+        const discover = controller.refreshPanes()
+        await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-windows')))
+        controller.gateway.executeData(
+            Buffer.from(
+                '%begin 1 1 1\n@0 foo\\ 1 0 0 1234,80x24,0,0,0\n@1 2 1 1 1235,80x24,0,0,1\n%end 1\n',
+            ),
+        )
+        await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-panes')))
+        controller.gateway.executeData(Buffer.from('%begin 1 2 1\n%1 @0 1\n%2 @1 0\n%end 2\n'))
+        await discover
+
+        expect(controller.getWindowState(0)?.name).toBe('foo 1')
+        expect(controller.getWindowState(0)?.index).toBe(0)
+        expect(controller.getWindowState(1)?.name).toBe('2')
+        expect(controller.getWindowState(1)?.index).toBe(1)
+        // Active flag must land on @1 (index 1), not be shifted by the name's "1".
+        expect(controller.getActiveWindowId()).toBe(1)
     })
 
     it('tracks the zoomed pane from %layout-change and clears it on unzoom', async () => {

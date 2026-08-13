@@ -19,10 +19,20 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
      * Controls whether hotkey-triggered input (e.g. Ctrl+C, paste) is forwarded.
      *
      * All tmux pane tabs have `hasFocus = true` simultaneously (needed for
-     * xterm frontend initialization), but only one pane should process hotkeys.
-     * This flag is managed by TmuxSessionTabComponent.focus().
+     * xterm frontend initialization), which means EVERY pane tab's hotkey$
+     * handler fires on a hotkey — sendInput()/paste() guard on this flag to
+     * ensure input only reaches tmux's active pane.
+     *
+     * This flag is managed exclusively by TmuxSessionTabComponent.focus()
+     * (which walks the MOUNTED panes via getAllTabs()) and by
+     * detachPaneView(). It must default to `false`: pane tabs created for
+     * windows that were never mounted (e.g. the other windows during attach
+     * bootstrap, or a pane-add for a non-active window) would otherwise keep
+     * `_tmuxActive = true` forever — focus() never sees them, so Ctrl+C /
+     * paste would be sent to tmux panes in the WRONG window, killing
+     * commands running there.
      */
-    _tmuxActive = true
+    _tmuxActive = false
 
     /**
      * User clicked this pane. Routes to the session tab's
