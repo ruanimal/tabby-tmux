@@ -12,7 +12,7 @@
     - vim 的 hello 页面 会丢失, 和这个无关, vim 在终端此处变化后 hello 内容自然会丢.
 - [x] focus all tmux panes 的实现可以优化，区分是 current window 还是所有 window（右键菜单改为 "Focus all tmux panes" 二级菜单，含 Current window / All windows 两个互斥范围项；范围状态提升到 controller 的 SyncScope）
 - [x] 断开重新连接后没有激活正确的 pane/window; 同时通过tab栏切换window时, pane 的激活状态也有问题, window 和 pane 的激活状态是否要分开维护
-- [ ] 搜索终端内容
+- [x] 搜索终端内容（自研 session 级搜索面板替换内置 per-pane 面板：增量搜索/上下导航/正则/大小写/全词/结果计数，切换 pane 自动关闭并清理高亮）
 - [ ] 快捷键支持
 
 ## 更新记录（2026-08）

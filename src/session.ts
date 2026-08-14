@@ -1357,8 +1357,7 @@ export class TmuxController {
      */
     getAllWindowStates(): WindowState[] {
         return Array.from(this.windowStates.values()).sort(
-            (a, b) =>
-                (a.index ?? Number.MAX_SAFE_INTEGER) - (b.index ?? Number.MAX_SAFE_INTEGER),
+            (a, b) => (a.index ?? Number.MAX_SAFE_INTEGER) - (b.index ?? Number.MAX_SAFE_INTEGER),
         )
     }
 

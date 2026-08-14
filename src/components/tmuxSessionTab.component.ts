@@ -19,6 +19,7 @@ import {
     RecoveryToken,
     ConfigService,
 } from 'tabby-core'
+import { Frontend } from 'tabby-terminal'
 import { TabRecoveryService } from 'tabby-core'
 import { TmuxController } from '../session'
 import { TmuxService } from '../services/tmux.service'
@@ -54,6 +55,11 @@ export interface TmuxSessionProfile {
         <div class="pane-area" #paneAreaEl>
             <ng-container #vc></ng-container>
         </div>
+        <tmux-search-panel
+            *ngIf="searchPanelOpen"
+            [frontend]="searchPanelFrontend!"
+            (close)="closeSearchPanel()"
+        ></tmux-search-panel>
         <tmux-window-bar
             [controller]="controller"
             [activeWindowId]="activeWindowId"
@@ -80,15 +86,23 @@ export interface TmuxSessionProfile {
                 box-sizing: border-box;
             }
             /* Pane containers: pixel-absolute positioned by applyPixelLayout().
-           No border, no padding — the xterm canvas fills the entire box. */
+           No border, no padding — the xterm canvas fills the entire box.
+           z-index: each .child has opacity < 1 → its own stacking context, so
+           without explicit z-index panes stack purely by DOM order and a
+           later-created pane can swallow clicks meant for floating UI of an
+           earlier pane (e.g. the native search panel, position:fixed inside
+           the active pane). Raising the focused pane keeps its floating
+           overlays above every other pane; dividers (z-index 5) stay on top. */
             ::ng-deep .pane-area > .child {
                 position: absolute;
                 box-sizing: border-box;
                 opacity: 0.75;
                 transition: opacity 0.125s;
+                z-index: 1;
             }
             ::ng-deep .pane-area > .child.focused {
                 opacity: 1;
+                z-index: 2;
             }
             /* Independent divider elements for pane boundaries + resize dragging.
            Width/height is set inline to 1 cell to match tmux's 1-char separator.
@@ -148,6 +162,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     controller: TmuxController | null = null
     activeWindowId: number | null = null
     connected = false
+    /** Session-level search panel state (replaces the built-in per-pane panel) */
+    searchPanelOpen = false
+    searchPanelFrontend: Frontend | null = null
     sessionName = ''
     private _initialized = false
     private _tabsService: TabsService
@@ -168,11 +185,30 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         tabsService: TabsService,
         private cdr: ChangeDetectorRef,
         private hostElement: ElementRef,
+        private hotkeysService: HotkeysService,
         log: LogService,
     ) {
         super(injector.get(HotkeysService), tabsService, injector.get(TabRecoveryService), injector)
         this._tabsService = tabsService
         this.logger = log.create('tmux-session')
+
+        // Route the 'search' hotkey to our own session-level search panel.
+        // The built-in per-pane panel cannot work in tmux mode (all panes
+        // keep hasFocus = true), and TmuxPaneTabComponent neutralizes the
+        // base class's handler by forcing showSearchPanel = false.
+        this.subscribeUntilDestroyed(this.hotkeysService.unfilteredHotkey$, (hotkey) => {
+            if (hotkey !== 'search') {
+                return
+            }
+            if (!this.hasFocus) {
+                return
+            }
+            if (this.searchPanelOpen) {
+                this.focusSearchInput()
+            } else {
+                this.openSearchPanel()
+            }
+        })
     }
 
     ngOnInit(): void {
@@ -654,21 +690,25 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * In tmux integration, all panes are visible simultaneously (split layout),
      * so we cannot blur other tabs (that would prevent their xterm frontends
      * from staying initialized). Instead, all pane tabs keep `hasFocus = true`
-     * for frontend initialization, and we use `TmuxPaneTabComponent._tmuxActive`
-     * to control which pane processes hotkeys.
+     * for frontend initialization, and `TmuxPaneTabComponent._tmuxActive`
+     * (derived from focusedTab) controls which pane processes hotkeys.
      */
     override focus(tab: any, syncToTmux = false): void {
+        // A pane switch changes the search target. The session-level panel
+        // searches one fixed frontend, so close it — matching stock Tabby,
+        // where the per-tab search panel disappears when the tab loses focus.
+        // returnFocus=false: this focus() itself re-focuses the new pane via
+        // emitFocused() → frontend.focus(); re-focusing the OLD pane here
+        // (getFocusedTab() still returns it at this point) would yank the
+        // DOM keyboard focus onto the pane that is about to lose focus.
+        if (this.searchPanelOpen) {
+            this.closeSearchPanel(false)
+        }
         const changed = (this as any).focusedTab !== tab
         ;(this as any).focusedTab = tab
         tab.emitFocused()
-        // Mark only the focused pane as active for hotkey routing.
-        // Other panes remain visible and initialized but won't process
-        // hotkey-triggered input (Ctrl+C, paste, etc.).
-        for (const t of this.getAllTabs()) {
-            if (t instanceof TmuxPaneTabComponent) {
-                t._tmuxActive = t === tab
-            }
-        }
+        // _tmuxActive is derived from focusedTab on each pane — no traversal
+        // needed here; exactly one pane reads as active at any moment.
         this.updatePaneFocusClasses()
 
         // Sync a USER-INITIATED focus change to tmux via select-pane, so the
@@ -702,6 +742,69 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      */
     focusPaneFromUserClick(paneTab: TmuxPaneTabComponent): void {
         this.focus(paneTab, true)
+    }
+
+    /**
+     * Open the session-level search panel, targeting the active pane's
+     * frontend. The panel searches one fixed frontend for its whole
+     * lifetime; any pane focus switch closes it (see focus()).
+     */
+    openSearchPanel(): void {
+        const focusedTab = this.getFocusedTab() as TmuxPaneTabComponent | null
+        if (!focusedTab?.frontend) {
+            return
+        }
+        this.searchPanelFrontend = focusedTab.frontend
+        this.searchPanelOpen = true
+        this.cdr.detectChanges()
+        setTimeout(() => this.focusSearchInput(), 0)
+    }
+
+    /**
+     * Close the search panel and clear search decorations on every pane.
+     *
+     * Must NOT call frontend.cancelSearch() here: it ends in
+     * frontend.focus(), which would yank the DOM keyboard focus onto a pane
+     * that may not be the one the user is interacting with. Instead, with
+     * `returnFocus` (user-initiated close via the panel's close button or
+     * Esc) keyboard focus returns to exactly one pane — the active one —
+     * mirroring the built-in panel's close behavior (which also refocuses
+     * the terminal). Callers that are themselves changing pane focus pass
+     * returnFocus=false and let their own focus flow handle the DOM focus.
+     */
+    closeSearchPanel(returnFocus = true): void {
+        if (!this.searchPanelOpen) {
+            return
+        }
+        this.searchPanelOpen = false
+        this.searchPanelFrontend = null
+        for (const t of this.getAllTabs()) {
+            if (t instanceof TmuxPaneTabComponent) {
+                ;(t.frontend as any)?.search?.clearDecorations?.()
+            }
+        }
+        if (returnFocus) {
+            ;(this.getFocusedTab() as TmuxPaneTabComponent | null)?.frontend?.focus()
+        }
+        this.cdr.detectChanges()
+    }
+
+    /**
+     * Focus the search panel's input, pre-filling it with the active pane's
+     * current selection — identical to the built-in 'search' hotkey
+     * behavior. Deferred past the render/change-detection cycle so the
+     * input element exists.
+     */
+    private focusSearchInput(): void {
+        const input = this.hostElement.nativeElement.querySelector(
+            'tmux-search-panel .search-input',
+        ) as HTMLInputElement | null
+        const selectedText = (this.searchPanelFrontend?.getSelection() ?? '').trim()
+        if (input && selectedText.length) {
+            input.value = selectedText
+        }
+        input?.focus()
+        input?.select()
     }
 
     /**
@@ -793,14 +896,26 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      */
     private detachPaneView(tab: any): void {
         // A pane detached from the view (window switch / move / close) must
-        // stop being a hotkey target.  Pane tabs stay alive while detached
+        // stop being a hotkey target. Pane tabs stay alive while detached
         // (their session keeps running and their hotkey$ subscription stays
-        // active), so without clearing `_tmuxActive` and the focus flag a
-        // stale pane from another window would still process hotkey-triggered
-        // input (Ctrl+C, paste, ...) for its tmux pane — killing commands
-        // running in other windows.
+        // active), so a stale pane from another window must not process
+        // hotkey-triggered input (Ctrl+C, paste, ...) for its tmux pane —
+        // killing commands running in other windows. Clearing parent below
+        // makes `_tmuxActive` (derived from the session tab's focusedTab,
+        // which requires a parent) read as false automatically.
+        // If the session-level search panel targets this pane, close it
+        // before the frontend is detached/destroyed — searching a stale
+        // frontend would throw, and search feedback on an invisible pane
+        // would be meaningless. returnFocus=false: pane focus is about to
+        // change anyway (detach is followed by focus on another pane).
         if (tab instanceof TmuxPaneTabComponent) {
-            tab._tmuxActive = false
+            if (this.searchPanelFrontend === tab.frontend) {
+                this.closeSearchPanel(false)
+            }
+            // Also drop any search decorations on this pane — a detached pane
+            // is no longer part of the visible window, and stale highlights
+            // must not survive into the next window switch.
+            ;(tab.frontend as any)?.search?.clearDecorations?.()
         }
         ;(tab as any).emitBlurred()
 

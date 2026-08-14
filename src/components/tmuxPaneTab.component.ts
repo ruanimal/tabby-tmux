@@ -15,24 +15,27 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     @Input() paneId: number
 
     /**
-     * Whether this pane is the active (keyboard-focused) pane in the tmux session.
-     * Controls whether hotkey-triggered input (e.g. Ctrl+C, paste) is forwarded.
+     * Whether this pane is the active (keyboard-focused) pane in the tmux
+     * session. Controls whether hotkey-triggered input (e.g. Ctrl+C, paste)
+     * is forwarded.
      *
      * All tmux pane tabs have `hasFocus = true` simultaneously (needed for
      * xterm frontend initialization), which means EVERY pane tab's hotkey$
      * handler fires on a hotkey — sendInput()/paste() guard on this flag to
      * ensure input only reaches tmux's active pane.
      *
-     * This flag is managed exclusively by TmuxSessionTabComponent.focus()
-     * (which walks the MOUNTED panes via getAllTabs()) and by
-     * detachPaneView(). It must default to `false`: pane tabs created for
-     * windows that were never mounted (e.g. the other windows during attach
-     * bootstrap, or a pane-add for a non-active window) would otherwise keep
-     * `_tmuxActive = true` forever — focus() never sees them, so Ctrl+C /
-     * paste would be sent to tmux panes in the WRONG window, killing
-     * commands running there.
+     * Derived from the session tab's focusedTab (a single reference) instead
+     * of a mutable per-pane boolean that only gets corrected by focus()
+     * traversals. This keeps exactly one pane active at any moment and
+     * automatically covers the cases a `false` default was meant to fix:
+     * panes for windows that were never mounted, or detached panes (parent
+     * = null), can never read as active, so Ctrl+C / paste can't be sent to
+     * tmux panes in the wrong window.
      */
-    _tmuxActive = false
+    get _tmuxActive(): boolean {
+        const sessionTab = this.parent as any
+        return !!sessionTab && (sessionTab as any).focusedTab === this
+    }
 
     /**
      * User clicked this pane. Routes to the session tab's
@@ -73,6 +76,34 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         // The host element is the pane container positioned by
         // TmuxSessionTabComponent.applyPixelLayout().
         this._paneHost = injector.get(ElementRef<HTMLElement>).nativeElement
+
+        // Neutralize the built-in 'search' hotkey handler.
+        //
+        // BaseTerminalTabComponent opens its native per-pane search panel on
+        // every tab whose `hasFocus` is true. In tmux mode ALL pane tabs keep
+        // `hasFocus = true` simultaneously, so that handler alone would open
+        // a panel on every pane at once. The session-level search panel
+        // (TmuxSessionTabComponent) handles the 'search' hotkey instead; this
+        // subscription (registered after the base one in super()) simply
+        // keeps the native panel closed at all times.
+        this.subscribeUntilDestroyed(this.hotkeys.unfilteredHotkey$, (hotkey) => {
+            if (hotkey === 'search') {
+                this.showSearchPanel = false
+            }
+        })
+    }
+
+    /**
+     * Open the session-level search panel via the session tab. When
+     * triggered from a context menu on an inactive pane, activate that pane
+     * first (select-pane + focus) so the search targets the clicked pane.
+     */
+    openSearchPanel(): void {
+        const sessionTab = this.parent as any
+        if (!this._tmuxActive) {
+            sessionTab?.focusPaneFromUserClick?.(this)
+        }
+        sessionTab?.openSearchPanel?.()
     }
 
     ngOnInit(): void {
@@ -473,7 +504,7 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     }
     /**
      * Override the native context menu to provide tmux-specific items only.
-     * Keeps: Copy, Paste, Close (pane).
+     * Keeps: Copy, Paste, Search, Close (pane).
      * Adds: Exit Tmux Mode, Split submenu, Zoom pane, Focus all tmux panes
      * submenu (scope: current window or all windows).
      */
@@ -486,6 +517,10 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
             {
                 label: this.translate.instant('Paste'),
                 click: () => this.paste(),
+            },
+            {
+                label: this.translate.instant('Search'),
+                click: () => this.openSearchPanel(),
             },
             { type: 'separator' },
             {

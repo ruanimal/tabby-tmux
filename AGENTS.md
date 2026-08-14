@@ -69,4 +69,5 @@ pnpm run build  # 生产构建
 - `ref/iterm2-tmux-integration.md` — iTerm2 参考文档
 - `ref/iTerm2-TmuxController.md` — iTerm2 TmuxController 实现分析
 - `ref/tmux.wiki/Control-Mode.md` — tmux Control Mode 官方文档
-- `ref/tabby/` — Tabby 源码参考
+- `ref/tabby/` — Tabby 源码参考(符号链接)
+- `ref/iTerm2/` — iTerm2 源码参考(符号链接)

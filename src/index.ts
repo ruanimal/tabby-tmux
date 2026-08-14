@@ -2,6 +2,7 @@ import { NgModule } from '@angular/core'
 import { CommonModule } from '@angular/common'
 import { FormsModule } from '@angular/forms'
 import TabbyCoreModule, { TabContextMenuItemProvider, ConfigProvider } from 'tabby-core'
+import TabbyTerminalModule from 'tabby-terminal'
 import { SettingsTabProvider } from 'tabby-settings'
 import { TmuxContextMenuProvider } from './tabContextMenu'
 import { TmuxConfigProvider } from './config'
@@ -9,10 +10,11 @@ import { TmuxSettingsTabProvider } from './settings'
 import { TmuxPaneTabComponent } from './components/tmuxPaneTab.component'
 import { TmuxSessionTabComponent } from './components/tmuxSessionTab.component'
 import { TmuxWindowBarComponent } from './components/tmuxWindowBar.component'
+import { TmuxSearchPanelComponent } from './components/tmuxSearchPanel.component'
 import { TmuxSettingsTabComponent } from './components/settings.component'
 
 @NgModule({
-    imports: [CommonModule, FormsModule, TabbyCoreModule],
+    imports: [CommonModule, FormsModule, TabbyCoreModule, TabbyTerminalModule],
     providers: [
         { provide: TabContextMenuItemProvider, useClass: TmuxContextMenuProvider, multi: true },
         { provide: ConfigProvider, useClass: TmuxConfigProvider, multi: true },
@@ -22,6 +24,7 @@ import { TmuxSettingsTabComponent } from './components/settings.component'
         TmuxPaneTabComponent,
         TmuxSessionTabComponent,
         TmuxWindowBarComponent,
+        TmuxSearchPanelComponent,
         TmuxSettingsTabComponent,
     ],
     entryComponents: [TmuxPaneTabComponent, TmuxSessionTabComponent, TmuxSettingsTabComponent],
