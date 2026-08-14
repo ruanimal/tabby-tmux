@@ -493,10 +493,17 @@ export class TmuxGateway {
                     continue
                 }
             }
-            // Handle UTF-8 properly
-            const buf = Buffer.from(str[i], 'utf-8')
-            for (const byte of buf) {
-                bytes.push(byte)
+            // Handle UTF-8 and UTF-16 surrogate pairs properly
+            const codePoint = str.codePointAt(i)
+            if (codePoint !== undefined) {
+                const charStr = String.fromCodePoint(codePoint)
+                const buf = Buffer.from(charStr, 'utf-8')
+                for (const byte of buf) {
+                    bytes.push(byte)
+                }
+                if (codePoint > 0xffff) {
+                    i++ // Skip the second surrogate code unit
+                }
             }
         }
         return Buffer.from(bytes)
