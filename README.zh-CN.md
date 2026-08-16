@@ -52,6 +52,23 @@ npm install tabby-tmux
 
 > **提示：** 修改设置后如果觉得 tmux 菜单不好调出，可以按住右键稍等片刻再松开，即可触发菜单。
 
+## 快捷键
+
+tmux 模式下快捷键按三层设计（详见 `doc/DESIGN_KEYBINDINGS.md`）：
+
+- **pane 操作复用 Tabby 原生快捷键**（直接作用于 tmux pane，由插件转为 tmux 命令）：
+    - 分屏：`Ctrl+Shift+S`（右）/ `Ctrl+Shift+D`（下）
+    - pane 导航：`Ctrl+Alt+方向键`
+    - **zoom pane（最大化/缩放）**：`Ctrl+Alt+Enter`，再次按下退出 zoom（macOS 为 `⌘+⌥+Enter`）
+- **window 操作为 tmux 模式独有快捷键**（默认键位，可在 Tabby Settings → Hotkeys 中修改）：
+    - 上一个 / 下一个 window：`Ctrl+Shift+[` / `Ctrl+Shift+]`
+    - 跳转 window 1–9：`Ctrl+Shift+1..9`
+    - 新建 window：`Ctrl+Shift+B`
+    - 切换 tmux mode：`Ctrl+Shift+X` — tmux mode 中按下退出（detach），普通终端中按下进入
+- **Tabby 顶层快捷键**（切换 tab、关闭 tab 等）保持不变
+
+所有快捷键（包括插件独有项）统一在 **Tabby Settings → Hotkeys** 中配置；插件设置页不提供快捷键表单，避免与 Tabby 形成双入口。
+
 ## 兼容性
 
 ### trzsz

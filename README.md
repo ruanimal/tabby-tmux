@@ -52,6 +52,23 @@ If you set **"On right-click"** to `Paste` or `Clipboard` in Tabby settings, thi
 
 > **Tip:** If the tmux menu feels hard to reach after changing the setting, hold the right mouse button down for a moment before releasing.
 
+## Keyboard shortcuts
+
+In tmux mode, shortcuts are layered (see `doc/DESIGN_KEYBINDINGS.md`):
+
+- **Pane operations reuse Tabby's native shortcuts** — they act on the tmux pane directly (the plugin translates them into tmux commands):
+    - Split: `Ctrl+Shift+S` (right) / `Ctrl+Shift+D` (down)
+    - Pane navigation: `Ctrl+Alt+Arrow`
+    - **Zoom pane** (maximize): `Ctrl+Alt+Enter` — press again to unzoom (`⌘+⌥+Enter` on macOS)
+- **Window operations are tmux-mode-specific shortcuts** (defaults below; rebind in Tabby Settings → Hotkeys):
+    - Previous / next window: `Ctrl+Shift+[` / `Ctrl+Shift+]`
+    - Go to window 1–9: `Ctrl+Shift+1..9`
+    - New window: `Ctrl+Shift+B`
+    - Toggle tmux mode: `Ctrl+Shift+X` — exits tmux mode when connected; enters it from the active terminal tab when idle
+- **Tabby top-level shortcuts** (switch/close tabs, etc.) are unchanged
+
+All shortcuts — including the plugin-specific ones — are configured in **Tabby Settings → Hotkeys**; the plugin settings page intentionally has no shortcut form, to avoid a second conflicting entry point.
+
 ## Compatibility
 
 ### trzsz

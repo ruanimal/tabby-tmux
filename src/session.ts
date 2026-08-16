@@ -5,6 +5,13 @@ import { createConditionalLogger, ConditionalLogger } from './logHelper'
 import { Injector } from '@angular/core'
 import { TmuxGateway, TMUX_COMMAND_TOLERATE_ERRORS } from './gateway'
 import { PaneState, applyPaneState, buildModeSequences, parsePaneState } from './paneState'
+import {
+    ResizeDirection,
+    SplitDirection,
+    resizePaneFlag,
+    selectPaneFlag,
+    splitWindowFlags,
+} from './tmuxKeymap'
 
 /** Pre-loaded pane data from batch discovery (iTerm2-style). */
 interface PaneSnapshot {
@@ -984,6 +991,17 @@ export class TmuxController {
         this.pendingSnapshots.delete(paneId)
     }
 
+    /**
+     * Whether the pane still has a live session in this controller.
+     * False once unregisterPane ran (e.g. after a %pane-close notification or
+     * controller.destroy), which lets TmuxPaneTabComponent distinguish a
+     * user-initiated close (close-pane hotkey → still tracked → kill-pane)
+     * from a teardown destroy (already untracked → plain teardown).
+     */
+    isPaneTracked(paneId: number): boolean {
+        return this.paneSessions.has(paneId)
+    }
+
     resizePane(_paneId: number, columns: number, rows: number): void {
         // Use refresh-client -C to set client size
         // This affects all panes uniformly in non-variable-size mode
@@ -1267,6 +1285,53 @@ export class TmuxController {
      */
     async zoomPane(paneId: number): Promise<void> {
         await this.gateway.sendCommand(`resize-pane -Z -t %${paneId}`, TMUX_COMMAND_TOLERATE_ERRORS)
+    }
+
+    /**
+     * Split the window at `paneId` in the given direction (re-routed from the
+     * Tabby native split-* hotkeys). tmux broadcasts %layout-change, which the
+     * controller turns into pane-add + layout-change events.
+     */
+    async splitWindow(paneId: number, dir: SplitDirection): Promise<void> {
+        await this.gateway.sendCommand(
+            `split-window ${splitWindowFlags(dir)} -t %${paneId}`,
+            TMUX_COMMAND_TOLERATE_ERRORS,
+        )
+    }
+
+    /**
+     * Select the nearest pane in the given direction (re-routed from the Tabby
+     * native pane-nav-* hotkeys). tmux replies with %window-pane-changed, which
+     * drives the UI focus — tmux stays the authority.
+     */
+    async selectPaneByDirection(paneId: number, dir: SplitDirection): Promise<void> {
+        await this.gateway.sendCommand(
+            `select-pane ${selectPaneFlag(dir)} -t %${paneId}`,
+            TMUX_COMMAND_TOLERATE_ERRORS,
+        )
+    }
+
+    /** Select a specific pane by ID (used by linear / numbered pane navigation). */
+    async selectPaneById(paneId: number): Promise<void> {
+        await this.gateway.sendCommand(`select-pane -t %${paneId}`, TMUX_COMMAND_TOLERATE_ERRORS)
+    }
+
+    /**
+     * Resize the pane at `paneId` by `amount` cells in the direction implied by
+     * the Tabby resizePane action (re-routed from pane-increase/decrease-*).
+     * The step defaults to Tabby's terminal.paneResizeStep so the resize
+     * granularity matches the user's native pane resize setting.
+     */
+    async resizePaneByDirection(
+        paneId: number,
+        action: ResizeDirection,
+        amount?: number,
+    ): Promise<void> {
+        const step = amount ?? this.configService?.store?.terminal?.paneResizeStep ?? 1
+        await this.gateway.sendCommand(
+            `resize-pane ${resizePaneFlag(action)} ${step} -t %${paneId}`,
+            TMUX_COMMAND_TOLERATE_ERRORS,
+        )
     }
 
     // --- Window Operations ---

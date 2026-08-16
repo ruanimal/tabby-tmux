@@ -44,15 +44,17 @@
 
 ### 关键流程概念
 
-| 术语                   | 含义                                                            |
-| ---------------------- | --------------------------------------------------------------- |
-| Enter / Exit Tmux Mode | 进入 / 退出 tmux 模式，由右键菜单触发                           |
-| batch discovery        | 批量发现 window/pane：`list-windows` → `list-panes` → pane 快照 |
-| PaneState              | `list-panes -F` 捕获的 pane 状态（光标、滚动区、模式标志等）    |
-| window bar             | 底部 tmux window 切换栏（可折叠）                               |
-| layout sync            | 把 tmux layout 同步到 Tabby 的像素绝对定位布局                  |
-| refresh-client         | 客户端尺寸刷新                                                  |
-| capture-pane           | 捕获 pane 屏幕内容，用于历史恢复                                |
+| 术语                   | 含义                                                                                                            |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Enter / Exit Tmux Mode | 进入 / 退出 tmux 模式，由右键菜单触发                                                                           |
+| batch discovery        | 批量发现 window/pane：`list-windows` → `list-panes` → pane 快照                                                 |
+| PaneState              | `list-panes -F` 捕获的 pane 状态（光标、滚动区、模式标志等）                                                    |
+| window bar             | 底部 tmux window 切换栏（可折叠）                                                                               |
+| layout sync            | 把 tmux layout 同步到 Tabby 的像素绝对定位布局                                                                  |
+| refresh-client         | 客户端尺寸刷新                                                                                                  |
+| capture-pane           | 捕获 pane 屏幕内容，用于历史恢复                                                                                |
+| 三层热键模型           | 快捷键分层：pane 复用 Tabby 原生、window 用 `tmuxPlugin.*` 动作、Tabby 顶层保留，见 `DESIGN_KEYBINDINGS.md`）   |
+| `tmuxPlugin.*` 热键    | Tabby Hotkeys 系统里的动作 id（如 `tmuxPlugin.next-window`），由 `TmuxHotkeyProvider` 注册，SessionTab 订阅路由 |
 
 ## 开发指南
 

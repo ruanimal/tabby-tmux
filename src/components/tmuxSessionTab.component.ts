@@ -27,6 +27,7 @@ import { TMUX_COMMAND_TOLERATE_ERRORS } from '../gateway'
 import { TmuxPaneTabComponent } from './tmuxPaneTab.component'
 import { parseTmuxLayout, TmuxLayoutNode, flattenLayout } from '../layoutParser'
 import { renderDividers } from '../divider'
+import { ResizeDirection, SplitDirection } from '../tmuxKeymap'
 
 export interface TmuxSessionProfile {
     sessionName?: string
@@ -196,7 +197,13 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         // The built-in per-pane panel cannot work in tmux mode (all panes
         // keep hasFocus = true), and TmuxPaneTabComponent neutralizes the
         // base class's handler by forcing showSearchPanel = false.
+        // tmuxPlugin.* hotkeys (window switching etc.) are routed here too —
+        // see doc/DESIGN_KEYBINDINGS.md.
         this.subscribeUntilDestroyed(this.hotkeysService.unfilteredHotkey$, (hotkey) => {
+            if (hotkey.startsWith('tmuxPlugin.')) {
+                this.handleTmuxHotkey(hotkey)
+                return
+            }
             if (hotkey !== 'search') {
                 return
             }
@@ -207,6 +214,19 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 this.focusSearchInput()
             } else {
                 this.openSearchPanel()
+            }
+        })
+
+        // Fully take over the native pane-maximize hotkey (Ctrl+Alt+Enter /
+        // ⌘+⌥+Enter). The base SplitTabComponent branch gates on
+        // `getAllTabs().length > 1`, which is false while zoomed (the
+        // non-zoomed panes are detached from the SplitContainer tree) — that
+        // made exit-zoom dead. We handle it here based on the real tmux pane
+        // count instead; maximize() is overridden to a no-op so the base
+        // branch cannot double-fire the zoom toggle.
+        this.subscribeUntilDestroyed(this.hotkeysService.hotkey$, (hotkey) => {
+            if (hotkey === 'pane-maximize') {
+                this.handlePaneMaximizeHotkey()
             }
         })
     }
@@ -486,6 +506,61 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     }
 
     /**
+     * Route window-level tmux hotkeys (tmuxPlugin.*, see DESIGN_KEYBINDINGS.md).
+     * Window switching goes through enqueueSwitchToWindow with syncToTmux=true
+     * (user-initiated — same as clicking the window bar), so tmux's active
+     * window follows the UI. toggle-tmux-mode is handled globally by
+     * TmuxService (see there), not in the session tab.
+     */
+    private handleTmuxHotkey(hotkey: string): void {
+        // Guard on tab focus: hotkeys are global, but tmuxPlugin.* actions
+        // must only fire while this session tab actually has focus —
+        // otherwise Ctrl-Shift-X / Ctrl-Shift-] typed in ANOTHER tab would
+        // silently disconnect the session or switch its window.
+        if (!this.hasFocus || !this.controller) {
+            return
+        }
+        switch (hotkey) {
+            case 'tmuxPlugin.previous-window':
+                this.switchWindowByOffset(-1)
+                break
+            case 'tmuxPlugin.next-window':
+                this.switchWindowByOffset(1)
+                break
+            case 'tmuxPlugin.new-window':
+                this.onCreateWindow()
+                break
+            default: {
+                const match = /^tmuxPlugin\.window-(\d+)$/.exec(hotkey)
+                if (match) {
+                    this.switchWindowByIndex(parseInt(match[1]) - 1)
+                }
+            }
+        }
+    }
+
+    /** Switch to the window `delta` steps away from the active one (wraps). */
+    private switchWindowByOffset(delta: number): void {
+        const windows = this.controller?.getAllWindowStates() ?? []
+        if (windows.length === 0) {
+            return
+        }
+        const currentIndex = windows.findIndex((w) => w.id === this.activeWindowId)
+        const base = currentIndex === -1 ? 0 : currentIndex
+        const target = windows[(base + delta + windows.length) % windows.length]
+        this.enqueueSwitchToWindow(target.id, true)
+    }
+
+    /** Switch to the window at the given index in tmux display order. */
+    private switchWindowByIndex(index: number): void {
+        const windows = this.controller?.getAllWindowStates() ?? []
+        const target = windows[index]
+        if (target) {
+            this.enqueueSwitchToWindow(target.id, true)
+        }
+    }
+
+    /**
      * Switch to a different tmux window.
      * Hides current window's panes and shows target window's panes.
      */
@@ -733,6 +808,126 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                     /* tmux may reject during detach */
                 })
         }
+    }
+
+    // ── Native hotkey re-routing (see doc/DESIGN_KEYBINDINGS.md) ──
+    //
+    // The SplitTabComponent base subscribes to hotkeys.hotkey$ and dispatches
+    // the native split-* / pane-nav-* / pane-maximize / pane-increase-decrease-*
+    // hotkeys to these instance methods. We override them to issue tmux
+    // control-mode commands instead of mutating the SplitContainer tree:
+    // tmux is the layout/state authority, and %layout-change /
+    // %window-pane-changed notifications drive the UI back.
+
+    /**
+     * Re-route the native split-* hotkeys (Ctrl-Shift-S/D etc.) to tmux.
+     * split-window triggers %layout-change → discoverPanesFromLayout → pane-add,
+     * so the new pane tab appears without any tree mutation here.
+     */
+    override async splitTab(tab: any, dir: SplitDirection): Promise<null> {
+        if (this.controller && tab instanceof TmuxPaneTabComponent) {
+            await this.controller.splitWindow(tab.paneId, dir)
+        }
+        return null
+    }
+
+    /**
+     * Re-route pane-nav-* hotkeys (Ctrl-Alt-arrows) to select-pane.
+     * tmux replies with %window-pane-changed → handleActivePaneChanged →
+     * focus() (internal path, syncToTmux=false), so the UI focus follows
+     * tmux — no select-pane feedback loop.
+     */
+    override navigate(dir: SplitDirection): void {
+        const tab = this.getFocusedTab()
+        if (this.controller && tab instanceof TmuxPaneTabComponent) {
+            this.controller.selectPaneByDirection(tab.paneId, dir).catch(() => {
+                /* tmux may reject during detach */
+            })
+        }
+    }
+
+    /** Re-route pane-nav-previous/next (Ctrl-Alt-[ / ]) to select-pane. */
+    override navigateLinear(delta: number): void {
+        const paneIds = this.getCurrentWindowPaneIds()
+        if (paneIds.length === 0) return
+        const tab = this.getFocusedTab()
+        if (!(tab instanceof TmuxPaneTabComponent)) return
+        const index = paneIds.indexOf(tab.paneId)
+        if (index === -1) return
+        const target = paneIds[(index + delta + paneIds.length) % paneIds.length]
+        this.controller?.selectPaneById(target).catch(() => {
+            /* tmux may reject during detach */
+        })
+    }
+
+    /** Re-route pane-nav-1..9 to select-pane by window pane order. */
+    override navigateSpecific(target: number): void {
+        const paneIds = this.getCurrentWindowPaneIds()
+        const paneId = paneIds[target]
+        if (paneId !== undefined) {
+            this.controller?.selectPaneById(paneId).catch(() => {
+                /* tmux may reject during detach */
+            })
+        }
+    }
+
+    /**
+     * Re-route the native pane-maximize hotkey (Ctrl+Alt+Enter / ⌘+⌥+Enter)
+     * to resize-pane -Z. Fully taken over here instead of relying on the base
+     * class: the base branch gates on `getAllTabs().length > 1`, which is
+     * false while zoomed (non-zoomed panes are detached from the SplitContainer
+     * tree), so exit-zoom would never fire. We guard on the REAL pane count
+     * (getWindowPaneCount, which counts panes even when detached) — single-pane
+     * windows stay un-zoomable, multi-pane windows toggle both ways. tmux owns
+     * the zoom state; %layout-change drives the UI back.
+     */
+    private handlePaneMaximizeHotkey(): void {
+        const tab = this.getFocusedTab()
+        if (!this.controller || !(tab instanceof TmuxPaneTabComponent)) {
+            return
+        }
+        if (this.controller.getWindowPaneCount(tab.paneId) < 2) {
+            return
+        }
+        this.controller.zoomPane(tab.paneId).catch(() => {
+            /* tmux may reject during detach */
+        })
+    }
+
+    /**
+     * Deliberately a no-op. pane-maximize is fully handled by
+     * handlePaneMaximizeHotkey (see the hotkey$ subscription in the
+     * constructor); the base class still dispatches pane-maximize to
+     * maximize(), and firing the zoom toggle here too would double-toggle.
+     * Grep-verified: Tabby never calls maximize() outside the base hotkey
+     * branch, so taking it over is safe.
+     */
+    override maximize(_tab: any): void {
+        /* no-op — see handlePaneMaximizeHotkey */
+    }
+
+    /**
+     * Re-route pane-increase/decrease-* to resize-pane. The base
+     * implementation adjusts SplitContainer ratios, which must NOT touch the
+     * pixel-absolute tmux layout tree.
+     */
+    override resizePane(direction: ResizeDirection): void {
+        const tab = this.getFocusedTab()
+        if (this.controller && tab instanceof TmuxPaneTabComponent) {
+            this.controller.resizePaneByDirection(tab.paneId, direction).catch(() => {
+                /* tmux may reject during detach */
+            })
+        }
+    }
+
+    /** Pane IDs of the active window in tmux order (ascending pane id). */
+    private getCurrentWindowPaneIds(): number[] {
+        if (!this.controller) return []
+        const windowId = this.activeWindowId
+        if (windowId === null) return []
+        const state = this.controller.getWindowState(windowId)
+        if (!state) return []
+        return Array.from(state.panes).sort((a, b) => a - b)
     }
 
     /**

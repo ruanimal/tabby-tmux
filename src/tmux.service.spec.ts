@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Subject } from 'rxjs'
-import type { AppService, ConfigService, LogService, Logger } from 'tabby-core'
+import type { AppService, ConfigService, HotkeysService, LogService, Logger } from 'tabby-core'
+import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { TmuxService, SessionContext } from './services/tmux.service'
 
 // tabby-core / tabby-terminal / tabby components are Angular partially-compiled
@@ -14,6 +15,7 @@ vi.mock('tabby-core', async () => {
         LogService: class LogService {},
         Logger: class Logger {},
         ConfigService: class ConfigService {},
+        HotkeysService: class HotkeysService {},
     }
 })
 
@@ -43,7 +45,11 @@ vi.mock('tabby-terminal', async () => {
             void 0
         }
     }
-    return { BaseSession: MockBaseSession, SessionMiddleware: MockSessionMiddleware }
+    return {
+        BaseSession: MockBaseSession,
+        SessionMiddleware: MockSessionMiddleware,
+        BaseTerminalTabComponent: class BaseTerminalTabComponent {},
+    }
 })
 
 vi.mock('./components/tmuxSessionTab.component', () => ({
@@ -96,6 +102,7 @@ function createService() {
         tabsChanged,
         openNewTabRaw,
         selectTab,
+        activeTab: null,
     } as unknown as AppService
 
     const zone = createZoneMock()
@@ -104,6 +111,9 @@ function createService() {
         store: { tmuxPlugin: { debugLogging: true } },
     } as unknown as ConfigService
     const logService = { create: () => logger } as unknown as LogService
+    const hotkeysService = {
+        unfilteredHotkey$: new Subject<string>(),
+    } as unknown as HotkeysService
 
     const service = new TmuxService(
         {} as any, // Injector — unused by the paths under test
@@ -111,8 +121,9 @@ function createService() {
         configService,
         zone as any,
         logService,
+        hotkeysService,
     )
-    return { service, appService, zone, tabs, openNewTabRaw, selectTab, logger }
+    return { service, appService, zone, tabs, openNewTabRaw, selectTab, logger, hotkeysService }
 }
 
 function createContext(topmostParent?: any): SessionContext {
@@ -182,6 +193,85 @@ describe('TmuxService', () => {
             expect(zone.run).toHaveBeenCalled()
             expect(tabs).toContain(originalTab)
             expect(selectTab).toHaveBeenCalledWith(originalTab)
+        })
+    })
+
+    describe('toggleTmuxMode', () => {
+        it('attaches from the active terminal tab when idle', () => {
+            const { service, appService } = createService()
+            const attachSpy = vi.spyOn(service, 'attachToTerminal').mockResolvedValue(undefined)
+            const terminal = Object.create(BaseTerminalTabComponent.prototype)
+            ;(appService as any).activeTab = terminal
+
+            service.toggleTmuxMode()
+
+            expect(attachSpy).toHaveBeenCalledWith(terminal)
+        })
+
+        it('disconnects when already connected', () => {
+            const { service } = createService()
+            ;(service as any).sessions.add(createContext())
+            const disconnectSpy = vi.spyOn(service, 'disconnect').mockResolvedValue(undefined)
+
+            service.toggleTmuxMode()
+
+            expect(disconnectSpy).toHaveBeenCalled()
+        })
+
+        it('attaches from a terminal nested inside the active split tab', () => {
+            const { service, appService } = createService()
+            const attachSpy = vi.spyOn(service, 'attachToTerminal').mockResolvedValue(undefined)
+            const terminal = Object.create(BaseTerminalTabComponent.prototype)
+            ;(appService as any).activeTab = { focusedTab: terminal }
+
+            service.toggleTmuxMode()
+
+            expect(attachSpy).toHaveBeenCalledWith(terminal)
+        })
+
+        it('does not re-attach a terminal tab already in a session', async () => {
+            const { service } = createService()
+            const context = createContext()
+            ;(service as any).sessions.add(context)
+            const unshiftSpy = vi.spyOn(context.terminalTab.session.middleware, 'unshift')
+
+            await service.attachToTerminal(context.terminalTab)
+
+            expect(unshiftSpy).not.toHaveBeenCalled()
+        })
+
+        it('ignores non-terminal active tabs', () => {
+            const { service, appService } = createService()
+            const attachSpy = vi.spyOn(service, 'attachToTerminal').mockResolvedValue(undefined)
+            ;(appService as any).activeTab = {} as any
+
+            service.toggleTmuxMode()
+
+            expect(attachSpy).not.toHaveBeenCalled()
+        })
+    })
+
+    describe('toggle hotkey wiring', () => {
+        it('responds to the tmuxPlugin.toggle-tmux-mode hotkey', () => {
+            const { service, hotkeysService } = createService()
+            const toggleSpy = vi
+                .spyOn(service, 'toggleTmuxMode')
+                .mockImplementation(() => undefined)
+
+            ;(hotkeysService as any).unfilteredHotkey$.next('tmuxPlugin.toggle-tmux-mode')
+
+            expect(toggleSpy).toHaveBeenCalled()
+        })
+
+        it('ignores unrelated hotkeys', () => {
+            const { service, hotkeysService } = createService()
+            const toggleSpy = vi
+                .spyOn(service, 'toggleTmuxMode')
+                .mockImplementation(() => undefined)
+
+            ;(hotkeysService as any).unfilteredHotkey$.next('tmuxPlugin.next-window')
+
+            expect(toggleSpy).not.toHaveBeenCalled()
         })
     })
 })

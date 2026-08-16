@@ -678,6 +678,26 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     }
 
     /**
+     * Re-route a user-initiated pane close (the Tabby close-pane hotkey goes
+     * straight to focusedTab.destroy()) to tmux: if the pane still has a live
+     * session, kill it so the tmux pane actually dies — otherwise the UI
+     * would drop the tab while the tmux pane survives (state fork). The
+     * resulting %pane-close notification re-enters cleanup (handlePaneClose),
+     * where isPaneTracked is already false, so the flow is idempotent.
+     *
+     * Teardown destroys (session end, %pane-close cleanup, detach) leave
+     * isPaneTracked false and fall through to a plain super.destroy().
+     */
+    override async destroy(): Promise<void> {
+        if (this.controller?.isPaneTracked(this.paneId)) {
+            this.controller.killPane(this.paneId).catch(() => {
+                /* tmux may reject during detach */
+            })
+        }
+        await super.destroy()
+    }
+
+    /**
      * Toggle "Focus all tmux panes" (synchronized input) for the given scope:
      * 'window' → panes in the current window (tmux synchronize-panes),
      * 'all' → every pane in the session. Clicking the already-active scope

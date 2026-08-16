@@ -13,7 +13,7 @@
 - [x] focus all tmux panes 的实现可以优化，区分是 current window 还是所有 window（右键菜单改为 "Focus all tmux panes" 二级菜单，含 Current window / All windows 两个互斥范围项；范围状态提升到 controller 的 SyncScope）
 - [x] 断开重新连接后没有激活正确的 pane/window; 同时通过tab栏切换window时, pane 的激活状态也有问题, window 和 pane 的激活状态是否要分开维护
 - [x] 搜索终端内容（自研 session 级搜索面板替换内置 per-pane 面板：增量搜索/上下导航/正则/大小写/全词/结果计数，切换 pane 自动关闭并清理高亮）
-- [ ] 快捷键支持
+- [x] 快捷键支持(三层热键模型,见 `doc/DESIGN_KEYBINDINGS.md`:pane 层复用 Tabby 原生热键 override 重路由;window 层 `tmuxPlugin.*` 注册为 Tabby 热键,默认键 `Ctrl-Shift-[`/`]`/`1..9`/`B`/`X`,设置入口统一在 Tabby Settings → Hotkeys)
 
 ## 更新记录（2026-08）
 

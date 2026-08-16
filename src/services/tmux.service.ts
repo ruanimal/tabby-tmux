@@ -1,5 +1,5 @@
 import { Injectable, Injector, NgZone } from '@angular/core'
-import { AppService, LogService, Logger, ConfigService } from 'tabby-core'
+import { AppService, LogService, Logger, ConfigService, HotkeysService } from 'tabby-core'
 import { createConditionalLogger, ConditionalLogger } from '../logHelper'
 import { BaseTerminalTabComponent, SessionMiddleware } from 'tabby-terminal'
 import { Subject, Subscription } from 'rxjs'
@@ -69,8 +69,24 @@ export class TmuxService {
         private configService: ConfigService,
         private zone: NgZone,
         log: LogService,
+        private hotkeysService: HotkeysService,
     ) {
         this.logger = log.create('tmux-service')
+        this.setupToggleHotkey()
+    }
+
+    /**
+     * The tmuxPlugin.toggle-tmux-mode hotkey toggles tmux mode based on the
+     * current state: connected → detach, idle → attach from the active
+     * terminal tab. It must live on the service (not the session tab) because
+     * the "enter" direction fires while no session tab exists.
+     */
+    private setupToggleHotkey(): void {
+        this.hotkeysService.unfilteredHotkey$.subscribe((hotkey) => {
+            if (hotkey === 'tmuxPlugin.toggle-tmux-mode') {
+                this.toggleTmuxMode()
+            }
+        })
     }
 
     private get log(): ConditionalLogger {
@@ -236,11 +252,71 @@ export class TmuxService {
     }
 
     /**
+     * Toggle tmux mode based on the current state (bound to
+     * tmuxPlugin.toggle-tmux-mode, default Ctrl+Shift+X):
+     * - connected → detach and restore the original tabs
+     * - idle → attach from the currently active terminal tab (if any)
+     *
+     * Guarded by an in-flight flag: disconnect() is async and detaches the
+     * original tab synchronously, so a rapid double-fire of the hotkey would
+     * otherwise re-enter with isConnected already false and stack a second
+     * interceptor/controller on the same PTY.
+     */
+    private toggleInFlight = false
+
+    async toggleTmuxMode(): Promise<void> {
+        if (this.toggleInFlight) {
+            return
+        }
+        this.toggleInFlight = true
+        try {
+            if (this.isConnected) {
+                await this.disconnect()
+                return
+            }
+            const tab = this.resolveActiveTerminalTab()
+            if (tab) {
+                await this.attachToTerminal(tab)
+            }
+        } finally {
+            this.toggleInFlight = false
+        }
+    }
+
+    /**
+     * Resolve the terminal tab the user is currently focused on, walking down
+     * from the active top-level tab (which may be a SplitTab wrapper) to its
+     * focused child. Returns null when the active tab is not a terminal
+     * (settings page, welcome tab, etc.) — the toggle then does nothing.
+     */
+    private resolveActiveTerminalTab(): BaseTerminalTabComponent<any> | null {
+        let tab: any = this.appService.activeTab
+        for (let depth = 0; tab && depth < 8; depth++) {
+            if (tab instanceof BaseTerminalTabComponent) {
+                return tab
+            }
+            tab = tab.focusedTab
+        }
+        return null
+    }
+
+    /**
      * Attach to tmux from an existing terminal tab.
      * Replaces the terminal tab with a TmuxSessionTab, keeping the terminal tab
      * hidden in context. On disconnect, the terminal tab is restored.
      */
     async attachToTerminal(terminalTab: BaseTerminalTabComponent<any>): Promise<void> {
+        // Re-entrancy guard: if this terminal tab is already attached to a
+        // session, don't stack a second interceptor / controller / `tmux -CC`
+        // write on the same PTY (defensive — toggleTmuxMode's in-flight flag
+        // covers the hotkey path; this covers direct callers).
+        for (const ctx of this.sessions) {
+            if (ctx.terminalTab === terminalTab) {
+                this.logger.warn('Terminal tab is already attached to tmux, ignoring')
+                return
+            }
+        }
+
         const session = terminalTab.session
         if (!session) {
             this.logger.error('Terminal tab has no session')
