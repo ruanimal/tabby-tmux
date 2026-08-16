@@ -1,4 +1,4 @@
-import { Injectable, Injector } from '@angular/core'
+import { Injectable, Injector, NgZone } from '@angular/core'
 import { AppService, LogService, Logger, ConfigService } from 'tabby-core'
 import { createConditionalLogger, ConditionalLogger } from '../logHelper'
 import { BaseTerminalTabComponent, SessionMiddleware } from 'tabby-terminal'
@@ -67,6 +67,7 @@ export class TmuxService {
         private injector: Injector,
         private appService: AppService,
         private configService: ConfigService,
+        private zone: NgZone,
         log: LogService,
     ) {
         this.logger = log.create('tmux-service')
@@ -110,52 +111,64 @@ export class TmuxService {
 
         this.log.info('Creating TmuxSessionTab...')
 
-        // Find the topmost parent tab (the actual tab listed in the top tab bar)
-        const topmostTab = context.terminalTab.topmostParent || context.terminalTab
-        context.topmostTab = topmostTab
+        // The whole attach pipeline (PTY IPC callback → output interceptor →
+        // gateway → controller.events) runs OUTSIDE the Angular zone, so a
+        // bare tabs.push/tabOpened.next() here would never trigger change
+        // detection: the new tab's component stays unmounted and its ngOnInit
+        // (which pushes the first client size via refresh-client -C) is
+        // deferred until some unrelated zone event (window focus/resize)
+        // happens to run CD — on a cold start that can take many seconds.
+        // Run the tab creation inside the Angular zone so the tab-body ngFor
+        // renders immediately and the tmux session initializes right away.
+        let sessionTab: TmuxSessionTabComponent
+        this.zone.run(() => {
+            // Find the topmost parent tab (the actual tab listed in the top tab bar)
+            const topmostTab = context.terminalTab.topmostParent || context.terminalTab
+            context.topmostTab = topmostTab
 
-        // Remember the original index so we can replace in-place
-        const tabs: any[] = (this.appService as any).tabs
-        const index = tabs.indexOf(topmostTab)
-        context.topmostTabIndex = index
+            // Remember the original index so we can replace in-place
+            const tabs: any[] = (this.appService as any).tabs
+            const index = tabs.indexOf(topmostTab)
+            context.topmostTabIndex = index
 
-        // IMPORTANT: We must use openNewTabRaw, NOT openNewTab.
-        // openNewTab wraps non-SplitTab types in a wrapper SplitTab via wrapAndAddTab().
-        // But TmuxSessionTabComponent extends SplitTabComponent, and wrapAndAddTab's
-        // SplitTab.addTab(thing) has special logic: when thing instanceof SplitTabComponent,
-        // it extracts thing.root and then DESTROYS thing. This kills our component instance
-        // before it ever gets rendered, so ngOnInit/ngAfterViewInit never fire.
-        //
-        // openNewTabRaw adds the tab directly without wrapping, so our component's
-        // view is properly attached and lifecycle hooks execute normally.
-        const sessionTab = (this.appService as any).openNewTabRaw({
-            type: TmuxSessionTabComponent as any,
-            inputs: {
-                existingController: context.controller,
-                profile: { sessionName: context.controller.getSessionName() },
-            },
-        }) as TmuxSessionTabComponent
+            // IMPORTANT: We must use openNewTabRaw, NOT openNewTab.
+            // openNewTab wraps non-SplitTab types in a wrapper SplitTab via wrapAndAddTab().
+            // But TmuxSessionTabComponent extends SplitTabComponent, and wrapAndAddTab's
+            // SplitTab.addTab(thing) has special logic: when thing instanceof SplitTabComponent,
+            // it extracts thing.root and then DESTROYS thing. This kills our component instance
+            // before it ever gets rendered, so ngOnInit/ngAfterViewInit never fire.
+            //
+            // openNewTabRaw adds the tab directly without wrapping, so our component's
+            // view is properly attached and lifecycle hooks execute normally.
+            sessionTab = (this.appService as any).openNewTabRaw({
+                type: TmuxSessionTabComponent as any,
+                inputs: {
+                    existingController: context.controller,
+                    profile: { sessionName: context.controller.getSessionName() },
+                },
+            }) as TmuxSessionTabComponent
 
-        context.sessionTab = sessionTab
+            context.sessionTab = sessionTab
 
-        // Move the session tab to the same position as the original tab
-        if (index !== -1) {
-            const sessionIndex = tabs.indexOf(sessionTab)
-            if (sessionIndex !== -1) {
-                tabs.splice(sessionIndex, 1) // remove from end
-                tabs.splice(index, 0, sessionTab) // insert at original position
-                ;(this.appService as any).tabsChanged.next()
+            // Move the session tab to the same position as the original tab
+            if (index !== -1) {
+                const sessionIndex = tabs.indexOf(sessionTab)
+                if (sessionIndex !== -1) {
+                    tabs.splice(sessionIndex, 1) // remove from end
+                    tabs.splice(index, 0, sessionTab) // insert at original position
+                    ;(this.appService as any).tabsChanged.next()
+                }
             }
-        }
 
-        // Hide the original topmost tab
-        if (index !== -1) {
-            const origIndex = tabs.indexOf(topmostTab)
-            if (origIndex !== -1) {
-                tabs.splice(origIndex, 1)
-                ;(this.appService as any).tabsChanged.next()
+            // Hide the original topmost tab
+            if (index !== -1) {
+                const origIndex = tabs.indexOf(topmostTab)
+                if (origIndex !== -1) {
+                    tabs.splice(origIndex, 1)
+                    ;(this.appService as any).tabsChanged.next()
+                }
             }
-        }
+        })
 
         // When the session tab is closed (by user or disconnect), clean up
         context.subscriptions.push(
@@ -190,19 +203,25 @@ export class TmuxService {
             context.sessionTab = undefined
         }
 
-        // Restore the original topmost tab to the tab bar at its original position
-        if (context.topmostTab) {
-            const tabs: any[] = (this.appService as any).tabs
-            const insertAt =
-                context.topmostTabIndex !== undefined
-                    ? Math.min(context.topmostTabIndex, tabs.length)
-                    : tabs.length
-            tabs.splice(insertAt, 0, context.topmostTab)
-            ;(this.appService as any).tabsChanged.next()
+        // Restore the original topmost tab to the tab bar at its original position.
+        // This mutates app.tabs + tabsChanged, which must run inside the Angular
+        // zone (see replaceWithSessionTab) so change detection re-renders the
+        // tab bar — otherwise the restored tab stays invisible until an
+        // unrelated zone event triggers CD.
+        this.zone.run(() => {
+            if (context.topmostTab) {
+                const tabs: any[] = (this.appService as any).tabs
+                const insertAt =
+                    context.topmostTabIndex !== undefined
+                        ? Math.min(context.topmostTabIndex, tabs.length)
+                        : tabs.length
+                tabs.splice(insertAt, 0, context.topmostTab)
+                ;(this.appService as any).tabsChanged.next()
 
-            // Activate the restored tab
-            ;(this.appService as any).selectTab(context.topmostTab)
-        }
+                // Activate the restored tab
+                ;(this.appService as any).selectTab(context.topmostTab)
+            }
+        })
 
         this.log.info('Disconnected tmux context')
     }
