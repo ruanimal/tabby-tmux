@@ -611,14 +611,8 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
 
     /** Whether this pane is currently zoomed (fills the entire window). */
     get _isZoomed(): boolean {
-        if (!this.controller || !this.paneId) return false
-        // Find which window owns this pane
-        for (const ws of this.controller.getAllWindowStates()) {
-            if (ws.panes.has(this.paneId)) {
-                return ws.zoomedPaneId === this.paneId
-            }
-        }
-        return false
+        if (!this.controller || this.paneId === undefined || this.paneId === null) return false
+        return this.controller.isPaneZoomed(this.paneId)
     }
 
     /**
@@ -627,7 +621,7 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
      * windows, so the zoom toggle must be disabled when this is 1.
      */
     get _windowPaneCount(): number {
-        if (!this.controller || !this.paneId) return 0
+        if (!this.controller || this.paneId === undefined || this.paneId === null) return 0
         return this.controller.getWindowPaneCount(this.paneId)
     }
 

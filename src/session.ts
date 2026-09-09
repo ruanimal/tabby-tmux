@@ -618,8 +618,15 @@ export class TmuxController {
             // space and the digit would be read as #{window_index} / #{window_active},
             // corrupting the index order. The regex below treats `\X` as one
             // name character and unescapes afterwards.
+            // Fetch window_flags + window_visible_layout so zoom state can be
+            // restored on reattach. tmux does NOT emit %layout-change on attach
+            // (verified on tmux 3.5a — attach only sends %begin/%end/
+            // %session-changed/%output/%window-pane-changed), so live zoom state
+            // must be captured here from the initial list-windows batch. The Z
+            // window flag marks a zoomed window; #{window_visible_layout} is the
+            // single-pane layout when zoomed (== window_layout when not).
             const winResult = await this.gateway.sendCommand(
-                'list-windows -F "#{window_id} #{q:window_name} #{window_index} #{window_active} #{window_layout}"',
+                'list-windows -F "#{window_id} #{q:window_name} #{window_index} #{window_active} #{window_layout} #{window_flags} #{window_visible_layout}"',
                 TMUX_COMMAND_TOLERATE_ERRORS,
             )
             const winLines = winResult
@@ -629,17 +636,23 @@ export class TmuxController {
             this.log.info(`Found ${winLines.length} window(s) from list-windows`)
 
             for (const line of winLines) {
-                // Format: "@0 'my window' 0 1 1234,0x0,0,0{60x24,0,0,1}"
+                // Format: "@0 'my window' 0 1 1234,0x0,0,0{60x24,0,0,1} *Z ac9d,80x24,0,0,0"
                 // Window name is #{q:}-escaped: a literal space inside the name
                 // is `\ `, so `(?:[^\\ ]|\\.)+` treats `\X` as a single name
                 // character and only stops at an UNescaped space.
-                const match = line.match(/^@?(\d+)\s+((?:[^\\ ]|\\.)+)\s+(\d+)\s+([01])\s+(.+)$/)
+                // window_visible_layout is absent on tmux < 2.2, so it is an
+                // optional trailing group.
+                const match = line.match(
+                    /^@?(\d+)\s+((?:[^\\ ]|\\.)+)\s+(\d+)\s+([01])\s+(\S+)\s+(\S+)(?:\s+(\S+))?$/,
+                )
                 if (match) {
                     const windowId = parseInt(match[1])
                     const windowName = match[2].replace(/\\(.)/g, '$1')
                     const windowIndex = parseInt(match[3])
                     const active = match[4] === '1'
                     const layout = match[5]
+                    const windowFlags = match[6]
+                    const visibleLayout = match[7]
                     if (active) {
                         this.activeWindowId = windowId
                     }
@@ -657,6 +670,24 @@ export class TmuxController {
                         state.name = windowName
                         state.index = windowIndex
                         state.layout = layout
+                    }
+
+                    // Seed zoom state captured at discovery time. Mirrors the
+                    // %layout-change handler: layout is always the real multi-pane
+                    // layout, visibleLayout is the single-pane layout when the
+                    // window is zoomed (Z flag present). On reattach this is the
+                    // ONLY source of zoom state (tmux sends no %layout-change).
+                    const state = this.windowStates.get(windowId)
+                    if (state) {
+                        const isZoomed = windowFlags?.includes('Z')
+                        if (isZoomed && visibleLayout) {
+                            const z = /\d+x\d+,\d+,\d+,(\d+)/.exec(visibleLayout)
+                            state.zoomedPaneId = z ? parseInt(z[1]) : undefined
+                            state.visibleLayout = visibleLayout
+                        } else {
+                            state.zoomedPaneId = undefined
+                            state.visibleLayout = undefined
+                        }
                     }
                 }
             }
@@ -1438,6 +1469,20 @@ export class TmuxController {
             }
         }
         return 0
+    }
+
+    /**
+     * Whether the given pane is currently zoomed (fills its entire window).
+     * Looks up the window owning the pane and compares its zoomedPaneId;
+     * unknown panes report false.
+     */
+    isPaneZoomed(paneId: number): boolean {
+        for (const state of this.windowStates.values()) {
+            if (state.panes.has(paneId)) {
+                return state.zoomedPaneId === paneId
+            }
+        }
+        return false
     }
 
     getFirstWindowId(): number | undefined {

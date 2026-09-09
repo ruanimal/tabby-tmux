@@ -231,7 +231,7 @@ describe('TmuxController', () => {
         await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-windows')))
         controller.gateway.executeData(
             Buffer.from(
-                '%begin 1 1 1\n@0 main 0 1 1234,80x24,0,0{40x24,0,0,1,40x24,41,0,2}\n%end 1\n',
+                '%begin 1 1 1\n@0 main 0 1 1234,80x24,0,0{40x24,0,0,1,40x24,41,0,2} * 1234,80x24,0,0{40x24,0,0,1,40x24,41,0,2}\n%end 1\n',
             ),
         )
         await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-panes')))
@@ -260,7 +260,7 @@ describe('TmuxController', () => {
         await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-windows')))
         controller.gateway.executeData(
             Buffer.from(
-                '%begin 1 1 1\n@5 main 0 1 1234,80x24,0,0\n@7 two 1 0 1235,80x24,0,0\n%end 1\n',
+                '%begin 1 1 1\n@5 main 0 1 1234,80x24,0,0 * 1234,80x24,0,0\n@7 two 1 0 1235,80x24,0,0 * 1235,80x24,0,0\n%end 1\n',
             ),
         )
         await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-panes')))
@@ -294,9 +294,9 @@ describe('TmuxController', () => {
         controller.gateway.executeData(
             Buffer.from(
                 '%begin 1786610843 350 1\r\n' +
-                    '@0 win0 0 0 b25d,80x24,0,0,0\r\n' +
-                    '@2 win2 1 0 b25f,80x24,0,0,2\r\n' +
-                    '@1 win1 2 1 b25e,80x24,0,0,1\r\n' +
+                    '@0 win0 0 0 b25d,80x24,0,0,0 * b25d,80x24,0,0,0\r\n' +
+                    '@2 win2 1 0 b25f,80x24,0,0,2 * b25f,80x24,0,0,2\r\n' +
+                    '@1 win1 2 1 b25e,80x24,0,0,1 * b25e,80x24,0,0,1\r\n' +
                     '%end 1786610843 350 1\r\n',
             ),
         )
@@ -326,7 +326,7 @@ describe('TmuxController', () => {
         await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-windows')))
         controller.gateway.executeData(
             Buffer.from(
-                '%begin 1 1 1\n@0 foo\\ 1 0 0 1234,80x24,0,0,0\n@1 2 1 1 1235,80x24,0,0,1\n%end 1\n',
+                '%begin 1 1 1\n@0 foo\\ 1 0 0 1234,80x24,0,0,0 * 1234,80x24,0,0,0\n@1 2 1 1 1235,80x24,0,0,1 * 1235,80x24,0,0,1\n%end 1\n',
             ),
         )
         await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-panes')))
@@ -365,6 +365,52 @@ describe('TmuxController', () => {
         // Let the async layout discovery settle (capture commands time out
         // after commandTimeoutMs=30 and are swallowed by their try/catch).
         await new Promise((resolve) => setTimeout(resolve, 80))
+    })
+
+    it('restores zoom state from list-windows window_flags on reattach', async () => {
+        const { controller, written } = createController()
+        controller.setClientSizePushed()
+
+        // tmux does NOT emit %layout-change on attach (verified on tmux 3.5a),
+        // so zoom state must be recovered from the initial list-windows batch.
+        // window_flags carries the Z flag when a window is zoomed;
+        // window_visible_layout is the single zoomed-pane layout then.
+        const discover = controller.refreshPanes()
+        await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-windows')))
+        controller.gateway.executeData(
+            Buffer.from(
+                '%begin 1 1 1\n' +
+                    '@0 two 0 1 e553,200x50,0,0[200x25,0,0,0,200x24,0,26,1] *Z ac9d,200x50,0,0,0\n' +
+                    '%end 1\n',
+            ),
+        )
+        await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-panes')))
+        controller.gateway.executeData(Buffer.from('%begin 1 2 1\n%0 @0 1\n%1 @0 0\n%end 2\n'))
+        await discover
+
+        // Zoom state is seeded from the Z flag: %0 is the zoomed pane and the
+        // window reports isPaneZoomed(%0). The window-layout stays the real
+        // multi-pane layout while visibleLayout is the single-pane zoom layout.
+        expect(controller.getWindowState(0)?.zoomedPaneId).toBe(0)
+        expect(controller.getWindowState(0)?.visibleLayout).toBe('ac9d,200x50,0,0,0')
+        expect(controller.getWindowState(0)?.layout).toBe(
+            'e553,200x50,0,0[200x25,0,0,0,200x24,0,26,1]',
+        )
+        expect(controller.isPaneZoomed(0)).toBe(true)
+
+        // A non-zoomed window stays un-zoomed even without a %layout-change.
+        const discover2 = controller.refreshPanes()
+        await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-windows')))
+        controller.gateway.executeData(
+            Buffer.from(
+                '%begin 1 3 1\n' + '@1 single 1 1 aa,80x24,0,0,5 * aa,80x24,0,0,5\n' + '%end 1\n',
+            ),
+        )
+        await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-panes')))
+        controller.gateway.executeData(Buffer.from('%begin 1 4 1\n%5 @1 1\n%end 2\n'))
+        await discover2
+        expect(controller.getWindowState(1)?.zoomedPaneId).toBeUndefined()
+        expect(controller.isPaneZoomed(5)).toBe(false)
     })
 
     it('reports the pane count of the owning window for the zoom toggle', async () => {
