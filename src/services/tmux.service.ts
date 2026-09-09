@@ -54,6 +54,8 @@ export interface SessionContext {
     topmostTabIndex?: number
     sessionTab?: TmuxSessionTabComponent
     subscriptions: Subscription[]
+    /** Whether disconnect cleanup has started; makes repeated teardown calls safe. */
+    disconnecting?: boolean
     /** Interceptor middleware on the original session, removed on disconnect */
     outputInterceptor?: TmuxOutputInterceptor
 }
@@ -186,15 +188,25 @@ export class TmuxService {
             }
         })
 
-        // When the session tab is closed (by user or disconnect), clean up
+        // When the session tab is closed by Tabby, detach and clean up the
+        // controller as well. disconnectContext unsubscribes this callback
+        // before it destroys a session tab itself, so the path is idempotent.
         context.subscriptions.push(
             sessionTab.destroyed$.subscribe(() => {
+                const wasSessionTab = context.sessionTab === sessionTab
                 context.sessionTab = undefined
+                if (wasSessionTab && !context.disconnecting) {
+                    void this.disconnectContext(context).catch((error) => {
+                        this.logger.warn('Failed to disconnect destroyed tmux session tab:', error)
+                    })
+                }
             }),
         )
     }
 
     async disconnectContext(context: SessionContext): Promise<void> {
+        if (context.disconnecting) return
+        context.disconnecting = true
         this.sessions.delete(context)
 
         context.subscriptions.forEach((s) => s.unsubscribe())
@@ -215,7 +227,7 @@ export class TmuxService {
 
         // Destroy the session tab (removes from tab bar)
         if (context.sessionTab) {
-            context.sessionTab.destroy()
+            await context.sessionTab.destroy()
             context.sessionTab = undefined
         }
 

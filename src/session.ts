@@ -1085,9 +1085,7 @@ export class TmuxController {
     /**
      * Whether the pane still has a live session in this controller.
      * False once unregisterPane ran (e.g. after a %pane-close notification or
-     * controller.destroy), which lets TmuxPaneTabComponent distinguish a
-     * user-initiated close (close-pane hotkey → still tracked → kill-pane)
-     * from a teardown destroy (already untracked → plain teardown).
+     * controller.destroy).
      */
     isPaneTracked(paneId: number): boolean {
         return this.paneSessions.has(paneId)
@@ -1384,6 +1382,7 @@ export class TmuxController {
         session.feedOutput(Buffer.from(csi(`${alt.cursorY + 1};${alt.cursorX + 1}H`), 'utf-8'))
     }
 
+    /** Kill a pane for an explicit user close action. Never call from destroy(). */
     async killPane(paneId: number): Promise<void> {
         await this.gateway.sendCommand(`kill-pane -t %${paneId}`, TMUX_COMMAND_TOLERATE_ERRORS)
     }
@@ -1467,6 +1466,7 @@ export class TmuxController {
         )
     }
 
+    /** Kill a window for an explicit user close action. Never call from destroy(). */
     async killWindow(windowId: number): Promise<void> {
         await this.gateway.sendCommand(`kill-window -t @${windowId}`, TMUX_COMMAND_TOLERATE_ERRORS)
     }
@@ -1480,7 +1480,8 @@ export class TmuxController {
     // --- Lifecycle ---
 
     async destroy(): Promise<void> {
-        // Close all pane sessions
+        // Close all pane sessions locally. Pane destruction must never issue
+        // kill-pane; only an explicit user close action may do that.
         for (const [_paneId, session] of this.paneSessions) {
             await session.destroy()
         }

@@ -194,6 +194,22 @@ describe('TmuxService', () => {
             expect(tabs).toContain(originalTab)
             expect(selectTab).toHaveBeenCalledWith(originalTab)
         })
+
+        it('disconnects when Tabby destroys the session tab directly', async () => {
+            const { service, tabs } = createService()
+            const originalTab = { name: 'original' }
+            const context = createContext(originalTab)
+            ;(service as any).replaceWithSessionTab(context)
+
+            const sessionTab = context.sessionTab!
+            ;(sessionTab.destroyed$ as Subject<void>).next()
+            await new Promise((resolve) => setTimeout(resolve, 0))
+
+            expect(context.controller.gateway.detach).toHaveBeenCalledOnce()
+            expect(context.controller.destroy).toHaveBeenCalledOnce()
+            expect(context.disconnecting).toBe(true)
+            expect(tabs).toContain(originalTab)
+        })
     })
 
     describe('toggleTmuxMode', () => {

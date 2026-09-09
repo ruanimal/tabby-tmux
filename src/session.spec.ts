@@ -235,6 +235,38 @@ describe('TmuxController', () => {
         expect(paneController.controller.getPaneTitle(7)).toBe('editor')
     })
 
+    it('sends kill-pane only for an explicit close request', async () => {
+        const { controller, written } = createController()
+        const kill = controller.killPane(5)
+
+        await waitForWrite(written, (writes) => writes.includes('kill-pane -t %5\r'))
+        controller.gateway.executeData(Buffer.from('%begin 1 1 1\n%end 1\n'))
+        await kill
+
+        expect(written).toContain('kill-pane -t %5\r')
+    })
+
+    it('sends kill-window only for an explicit close request', async () => {
+        const { controller, written } = createController()
+        const kill = controller.killWindow(3)
+
+        await waitForWrite(written, (writes) => writes.includes('kill-window -t @3\r'))
+        controller.gateway.executeData(Buffer.from('%begin 1 1 1\n%end 1\n'))
+        await kill
+
+        expect(written).toContain('kill-window -t @3\r')
+    })
+
+    it('does not kill panes when the controller is destroyed', async () => {
+        const { controller, written } = createController()
+        new TmuxPaneSession(createLoggerMock(), controller, 5)
+
+        await controller.destroy()
+
+        expect(written.filter((write) => write.includes('kill-pane'))).toEqual([])
+        expect(controller.isPaneTracked(5)).toBe(false)
+    })
+
     it('clears the active pane record on %pane-close', async () => {
         const { controller } = createController()
         await initController(controller)
