@@ -24,6 +24,13 @@ describe('tmux i18n', () => {
         expect(translateTmux('zh', 'window.defaultName', { id: 2 })).toBe('Window 2')
     })
 
+    it('translates rename dialog actions', () => {
+        expect(translateTmux('en', 'common.cancel')).toBe('Cancel')
+        expect(translateTmux('en', 'common.confirm')).toBe('Confirm')
+        expect(translateTmux('zh', 'common.cancel')).toBe('取消')
+        expect(translateTmux('zh', 'common.confirm')).toBe('确定')
+    })
+
     it('uses the English catalog as the fallback catalog', () => {
         expect(translateTmux('en', 'mode.enter')).toBe('Enter Tmux Mode')
         expect(translateTmux('zh', 'mode.enter')).toBe('进入 Tmux 模式')
