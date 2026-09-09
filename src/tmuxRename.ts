@@ -25,3 +25,27 @@ export function unescapeTmuxValue(value: string): string {
     if (value === "''" || value === '""') return ''
     return value.replace(/\\(.)/g, '$1')
 }
+
+export interface TmuxWindowRenameTarget {
+    id: number
+    name: string
+}
+
+interface TmuxWindowLookup {
+    getWindowIdForPane(paneId: number): number | null
+    getWindowState(windowId: number): { name: string } | undefined
+}
+
+/** Find the window rename target for a pane context menu action. */
+export function getTmuxWindowRenameTarget(
+    controller: TmuxWindowLookup,
+    paneId: number,
+): TmuxWindowRenameTarget | null {
+    const windowId = controller.getWindowIdForPane(paneId)
+    if (windowId === null) return null
+
+    const window = controller.getWindowState(windowId)
+    if (!window) return null
+
+    return { id: windowId, name: window.name }
+}

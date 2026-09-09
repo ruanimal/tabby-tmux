@@ -4,6 +4,7 @@ import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { MenuItemOptions } from 'tabby-core'
 import { TmuxController, TmuxPaneSession, SyncScope } from '../session'
 import { TmuxI18nService } from '../services/tmuxI18n.service'
+import { getTmuxWindowRenameTarget } from '../tmuxRename'
 
 @Component({
     selector: 'tmux-pane-tab',
@@ -540,6 +541,16 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         sessionTab?.requestPaneRename?.(this.paneId, this.controller.getPaneTitle(this.paneId))
     }
 
+    renameWindowFromMenu(): void {
+        if (!this.controller) return
+
+        const target = getTmuxWindowRenameTarget(this.controller, this.paneId)
+        if (!target) return
+
+        const sessionTab = this.parent as any
+        sessionTab?.requestWindowRename?.(target)
+    }
+
     // Override generic title behavior
     getCustomTitle(): string {
         return this.getPaneDisplayName()
@@ -547,8 +558,8 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     /**
      * Override the native context menu to provide tmux-specific items only.
      * Keeps: Copy, Paste, Search, Close (pane).
-     * Adds: Exit Tmux Mode, Split submenu, Zoom pane, Focus all tmux panes
-     * submenu (scope: current window or all windows).
+     * Adds: Rename Pane, Rename Window, Exit Tmux Mode, Split submenu, Zoom
+     * pane, Focus all tmux panes submenu (scope: current window or all windows).
      */
     async buildContextMenu(): Promise<MenuItemOptions[]> {
         const items: MenuItemOptions[] = [
@@ -567,6 +578,10 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
             {
                 label: this.i18n.t('pane.rename'),
                 click: () => this.renamePaneFromMenu(),
+            },
+            {
+                label: this.i18n.t('window.rename'),
+                click: () => this.renameWindowFromMenu(),
             },
             { type: 'separator' },
             {
