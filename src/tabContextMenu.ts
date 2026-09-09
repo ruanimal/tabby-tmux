@@ -46,6 +46,10 @@ export class TmuxContextMenuProvider extends TabContextMenuItemProvider {
                     },
                 },
                 {
+                    label: this.i18n.t('pane.rename'),
+                    click: () => (tab as TmuxPaneTabComponent).renamePaneFromMenu(),
+                },
+                {
                     label: this.i18n.t('pane.split'),
                     submenu: [
                         {

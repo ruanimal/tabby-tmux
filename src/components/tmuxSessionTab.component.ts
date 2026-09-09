@@ -29,9 +29,17 @@ import { TmuxPaneTabComponent } from './tmuxPaneTab.component'
 import { parseTmuxLayout, TmuxLayoutNode, flattenLayout } from '../layoutParser'
 import { renderDividers } from '../divider'
 import { ResizeDirection, SplitDirection } from '../tmuxKeymap'
+import { normalizeRename } from '../tmuxRename'
 
 export interface TmuxSessionProfile {
     sessionName?: string
+}
+
+interface RenameRequest {
+    type: 'window' | 'pane'
+    id: number
+    currentValue: string
+    title: string
 }
 
 /**
@@ -62,11 +70,21 @@ export interface TmuxSessionProfile {
             [frontend]="searchPanelFrontend!"
             (close)="closeSearchPanel()"
         ></tmux-search-panel>
+        <tmux-rename-dialog
+            *ngIf="renameRequest"
+            [title]="renameRequest.title"
+            [initialValue]="renameRequest.currentValue"
+            [cancelLabel]="i18n.t('common.cancel')"
+            [confirmLabel]="i18n.t('common.confirm')"
+            (submitName)="submitRename($event)"
+            (cancel)="cancelRename()"
+        ></tmux-rename-dialog>
         <tmux-window-bar
             [controller]="controller"
             [activeWindowId]="activeWindowId"
             (windowSwitch)="enqueueSwitchToWindow($event, true)"
             (windowClose)="onWindowClose($event)"
+            (renameRequested)="requestWindowRename($event)"
             (disconnect)="onDisconnect()"
             (createWindow)="onCreateWindow()"
         ></tmux-window-bar>
@@ -167,6 +185,8 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     /** Session-level search panel state (replaces the built-in per-pane panel) */
     searchPanelOpen = false
     searchPanelFrontend: Frontend | null = null
+    /** Session-level rename dialog state shared by window and pane menus. */
+    renameRequest: RenameRequest | null = null
     sessionName = ''
     private _initialized = false
     private _tabsService: TabsService
@@ -954,6 +974,60 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * frontend. The panel searches one fixed frontend for its whole
      * lifetime; any pane focus switch closes it (see focus()).
      */
+    requestWindowRename(request: { id: number; name: string }): void {
+        this.renameRequest = {
+            type: 'window',
+            id: request.id,
+            currentValue: request.name,
+            title: this.i18n.t('window.renamePrompt'),
+        }
+        this.cdr.detectChanges()
+    }
+
+    requestPaneRename(paneId: number, currentValue: string): void {
+        if (!this.controller) return
+
+        this.renameRequest = {
+            type: 'pane',
+            id: paneId,
+            currentValue,
+            title: this.i18n.t('pane.renamePrompt'),
+        }
+        this.cdr.detectChanges()
+    }
+
+    async submitRename(value: string): Promise<void> {
+        const request = this.renameRequest
+        const controller = this.controller
+        const name = normalizeRename(value)
+        if (!request || !controller || !name) return
+
+        try {
+            if (request.type === 'window') {
+                await controller.renameWindow(request.id, name)
+            } else {
+                await controller.renamePane(request.id, name)
+            }
+        } catch (e) {
+            this.logger.warn('Failed to rename tmux target:', e)
+        } finally {
+            this.closeRenameDialog()
+        }
+    }
+
+    cancelRename(): void {
+        if (!this.renameRequest) return
+        this.closeRenameDialog()
+    }
+
+    private closeRenameDialog(): void {
+        this.renameRequest = null
+        this.cdr.detectChanges()
+        setTimeout(() => {
+            ;(this.getFocusedTab() as TmuxPaneTabComponent | null)?.frontend?.focus()
+        }, 0)
+    }
+
     openSearchPanel(): void {
         const focusedTab = this.getFocusedTab() as TmuxPaneTabComponent | null
         if (!focusedTab?.frontend) {

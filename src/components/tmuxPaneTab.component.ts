@@ -78,10 +78,7 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         this.i18n = injector.get(TmuxI18nService)
         this.subscribeUntilDestroyed(this.i18n.languageChange$, () => {
             if (this.paneId !== undefined && this.paneId !== null) {
-                if (this.profile) {
-                    this.profile.name = this.i18n.t('title.paneProfile', { id: this.paneId })
-                }
-                this.setTitle(this.i18n.t('title.pane', { id: this.paneId }))
+                this.updatePaneTitle()
                 if (this._zoomIndicator) {
                     this._zoomIndicator.title = this.i18n.t('zoom.exit')
                     this._zoomIndicator.textContent = this.i18n.t('zoom.exit')
@@ -125,14 +122,21 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         // Profile must be set BEFORE calling super.ngOnInit() because
         // the parent class configures the terminal frontend using profile settings
         this.profile = {
-            name: this.i18n.t('title.paneProfile', { id: this.paneId }),
+            name: this.getPaneDisplayName(),
             type: 'tmux',
             options: {},
             // Required properties for BaseTerminalTabComponent
             behaviorOnSessionEnd: 'close',
             terminalColorScheme: null, // Use default
         }
-        this.setTitle(this.i18n.t('title.pane', { id: this.paneId }))
+        this.updatePaneTitle()
+        if (this.controller) {
+            this.subscribeUntilDestroyed(this.controller.events, (event) => {
+                if (event.type === 'pane-renamed' && event.paneId === this.paneId) {
+                    this.updatePaneTitle()
+                }
+            })
+        }
 
         // Now call parent's ngOnInit to set up the frontend.
         // NOTE: super.ngOnInit() schedules a setImmediate that checks
@@ -513,9 +517,32 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         return true
     }
 
+    private getPaneDisplayName(): string {
+        const title = this.controller?.getPaneTitle(this.paneId)
+        return title || this.i18n.t('title.paneProfile', { id: this.paneId })
+    }
+
+    private updatePaneTitle(): void {
+        const displayName = this.getPaneDisplayName()
+        if (this.profile) {
+            this.profile.name = displayName
+        }
+        this.setTitle(
+            this.controller?.getPaneTitle(this.paneId) ||
+                this.i18n.t('title.pane', { id: this.paneId }),
+        )
+    }
+
+    async renamePaneFromMenu(): Promise<void> {
+        if (!this.controller) return
+
+        const sessionTab = this.parent as any
+        sessionTab?.requestPaneRename?.(this.paneId, this.controller.getPaneTitle(this.paneId))
+    }
+
     // Override generic title behavior
     getCustomTitle(): string {
-        return this.i18n.t('title.paneProfile', { id: this.paneId })
+        return this.getPaneDisplayName()
     }
     /**
      * Override the native context menu to provide tmux-specific items only.
@@ -536,6 +563,10 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
             {
                 label: this.i18n.t('search.placeholder'),
                 click: () => this.openSearchPanel(),
+            },
+            {
+                label: this.i18n.t('pane.rename'),
+                click: () => this.renamePaneFromMenu(),
             },
             { type: 'separator' },
             {

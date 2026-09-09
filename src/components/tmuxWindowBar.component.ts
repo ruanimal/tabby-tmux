@@ -8,7 +8,7 @@ import {
     ChangeDetectorRef,
 } from '@angular/core'
 import { Subscription } from 'rxjs'
-import { ConfigService } from 'tabby-core'
+import { ConfigService, MenuItemOptions, PlatformService } from 'tabby-core'
 import { TmuxController } from '../session'
 import { TmuxI18nService } from '../services/tmuxI18n.service'
 
@@ -187,6 +187,7 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
 
     @Output() windowSwitch = new EventEmitter<number>()
     @Output() windowClose = new EventEmitter<number>()
+    @Output() renameRequested = new EventEmitter<{ id: number; name: string }>()
     @Output() disconnect = new EventEmitter<void>()
     @Output() createWindow = new EventEmitter<void>()
 
@@ -194,6 +195,7 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
 
     closeWindowTitle = ''
     newWindowTitle = ''
+    renameWindowTitle = ''
     disconnectTitle = ''
 
     private subscription: Subscription
@@ -202,6 +204,7 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
     constructor(
         private cdr: ChangeDetectorRef,
         private configService: ConfigService,
+        private platform: PlatformService,
         private i18n: TmuxI18nService,
     ) {
         this.updateLabels()
@@ -265,6 +268,7 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
     private updateLabels(): void {
         this.closeWindowTitle = this.i18n.t('window.close')
         this.newWindowTitle = this.i18n.t('window.new')
+        this.renameWindowTitle = this.i18n.t('window.rename')
         this.disconnectTitle = this.i18n.t('mode.disconnect')
     }
 
@@ -273,8 +277,17 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
         this.windowClose.emit(win.id)
     }
 
-    onContextMenu(event: MouseEvent, _win: WindowInfo): void {
-        // Reserved for future context menu (rename, close window, etc.)
+    onContextMenu(event: MouseEvent, win: WindowInfo): void {
         event.preventDefault()
+        event.stopPropagation()
+        this.platform.popupContextMenu(
+            [
+                {
+                    label: this.renameWindowTitle,
+                    click: () => this.renameRequested.emit({ id: win.id, name: win.name }),
+                },
+            ] as MenuItemOptions[],
+            event,
+        )
     }
 }

@@ -214,6 +214,27 @@ describe('TmuxController', () => {
         expect(controller.getWindowState(5)?.name).toBe('work')
     })
 
+    it('sends tmux commands for window and pane renames', async () => {
+        const windowController = createController()
+        const windowRename = windowController.controller.renameWindow(5, 'my "window"')
+        await waitForWrite(windowController.written, (writes) =>
+            writes.some((write) => write.startsWith('rename-window -t @5')),
+        )
+        windowController.controller.gateway.executeData(Buffer.from('%begin 1 1 1\n%end 1\n'))
+        await windowRename
+        expect(windowController.written).toContain('rename-window -t @5 "my \\"window\\""\r')
+
+        const paneController = createController()
+        const paneRename = paneController.controller.renamePane(7, 'editor')
+        await waitForWrite(paneController.written, (writes) =>
+            writes.some((write) => write.startsWith('select-pane -t %7 -T')),
+        )
+        paneController.controller.gateway.executeData(Buffer.from('%begin 1 1 1\n%end 1\n'))
+        await paneRename
+        expect(paneController.written).toContain('select-pane -t %7 -T "editor"\r')
+        expect(paneController.controller.getPaneTitle(7)).toBe('editor')
+    })
+
     it('clears the active pane record on %pane-close', async () => {
         const { controller } = createController()
         await initController(controller)
@@ -235,10 +256,13 @@ describe('TmuxController', () => {
             ),
         )
         await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-panes')))
-        controller.gateway.executeData(Buffer.from('%begin 1 2 1\n%1 @0 1\n%2 @0 0\n%end 2\n'))
+        controller.gateway.executeData(
+            Buffer.from('%begin 1 2 1\n%1 @0 1 editor\\ pane\n%2 @0 0\n%end 2\n'),
+        )
         await discover
 
         expect(controller.getAllPaneIds()).toEqual([1, 2])
+        expect(controller.getPaneTitle(1)).toBe('editor pane')
         expect(controller.getActivePaneId(0)).toBe(1)
         expect(controller.getActiveWindowId()).toBe(0)
         expect(controller.getFirstWindowId()).toBe(0)

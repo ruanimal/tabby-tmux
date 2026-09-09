@@ -12,6 +12,7 @@ import {
     selectPaneFlag,
     splitWindowFlags,
 } from './tmuxKeymap'
+import { quoteTmuxArgument, normalizeRename, unescapeTmuxValue } from './tmuxRename'
 
 /** Pre-loaded pane data from batch discovery (iTerm2-style). */
 interface PaneSnapshot {
@@ -294,6 +295,7 @@ export class TmuxController {
     private paneSessions = new Map<number, TmuxPaneSession>()
     private windowStates = new Map<number, WindowState>()
     private knownPanes = new Set<number>()
+    private paneTitles = new Map<number, string>()
     private pendingPaneOutput = new Map<number, Buffer[]>()
     /** Pre-loaded history from batch discovery (iTerm2-style). */
     private pendingSnapshots = new Map<number, PaneSnapshot>()
@@ -455,6 +457,11 @@ export class TmuxController {
         })
 
         this.gateway.windowClose$.subscribe((windowId) => {
+            const windowState = this.windowStates.get(windowId)
+            for (const paneId of windowState?.panes ?? []) {
+                this.knownPanes.delete(paneId)
+                this.paneTitles.delete(paneId)
+            }
             this.windowStates.delete(windowId)
             this.windowActivePanes.delete(windowId)
             this.events.next({ type: 'window-close', windowId })
@@ -473,6 +480,7 @@ export class TmuxController {
             this.log.info(`Pane %${paneId} closed in window @${windowId}`)
             // Remove from known panes
             this.knownPanes.delete(paneId)
+            this.paneTitles.delete(paneId)
             // Remove from window state
             const windowState = this.windowStates.get(windowId)
             if (windowState) {
@@ -692,12 +700,12 @@ export class TmuxController {
                 }
             }
 
-            // Step 2: Discover all panes and map to windows.
             // #{pane_active} restores per-window active pane state on
             // (re)connect — this is window-level state, independent of the
-            // session-level active window.
+            // session-level active window. #{q:pane_title} is retained so the
+            // pane context menu can edit and display the tmux pane title.
             const paneResult = await this.gateway.sendCommand(
-                'list-panes -s -F "#{pane_id} #{window_id} #{pane_active}"',
+                'list-panes -s -F "#{pane_id} #{window_id} #{pane_active} #{q:pane_title}"',
                 TMUX_COMMAND_TOLERATE_ERRORS,
             )
             const paneLines = paneResult
@@ -708,10 +716,21 @@ export class TmuxController {
 
             const newPaneIds: Array<{ paneId: number; windowId: number }> = []
             for (const line of paneLines) {
-                const match = line.match(/^%?(\d+)\s+@?(\d+)\s+([01])$/)
+                const match = line.match(/^%?(\d+)\s+@?(\d+)\s+([01])(?:\s+((?:[^\\ ]|\\.)+))?$/)
                 if (match) {
                     const paneId = parseInt(match[1])
                     const windowId = parseInt(match[2])
+                    const paneTitle = match[4] ? unescapeTmuxValue(match[4]) : ''
+                    const previousPaneTitle = this.paneTitles.get(paneId)
+                    this.paneTitles.set(paneId, paneTitle)
+                    if (previousPaneTitle !== undefined && previousPaneTitle !== paneTitle) {
+                        this.events.next({
+                            type: 'pane-renamed',
+                            paneId,
+                            windowId,
+                            data: { name: paneTitle },
+                        })
+                    }
                     if (match[3] === '1') {
                         this.windowActivePanes.set(windowId, paneId)
                     }
@@ -750,6 +769,7 @@ export class TmuxController {
                     this.log.warn('Rolling back discovery: retrying after client size is pushed')
                     for (const { paneId, windowId } of newPaneIds) {
                         this.knownPanes.delete(paneId)
+                        this.paneTitles.delete(paneId)
                         this.windowStates.get(windowId)?.panes.delete(paneId)
                         if (this.windowActivePanes.get(windowId) === paneId) {
                             this.windowActivePanes.delete(windowId)
@@ -848,6 +868,7 @@ export class TmuxController {
             for (const paneId of closedPaneIds) {
                 windowState.panes.delete(paneId)
                 this.knownPanes.delete(paneId)
+                this.paneTitles.delete(paneId)
                 // Drop stale active-pane record (pane moved/closed)
                 if (this.windowActivePanes.get(windowId) === paneId) {
                     this.windowActivePanes.delete(windowId)
@@ -882,6 +903,7 @@ export class TmuxController {
                 this.log.warn('Rolling back layout discovery: retrying after client size is pushed')
                 for (const { paneId, windowId: wid } of newPaneIds) {
                     this.knownPanes.delete(paneId)
+                    this.paneTitles.delete(paneId)
                     this.windowStates.get(wid)?.panes.delete(paneId)
                     if (this.windowActivePanes.get(wid) === paneId) {
                         this.windowActivePanes.delete(wid)
@@ -1031,6 +1053,24 @@ export class TmuxController {
      */
     isPaneTracked(paneId: number): boolean {
         return this.paneSessions.has(paneId)
+    }
+
+    /** Return the tmux pane title, or an empty string when it is unset/unknown. */
+    getPaneTitle(paneId: number): string {
+        return this.paneTitles.get(paneId) ?? ''
+    }
+
+    /** Rename a pane using tmux's pane title. */
+    async renamePane(paneId: number, name: string): Promise<void> {
+        const normalized = normalizeRename(name)
+        if (!normalized) return
+
+        await this.gateway.sendCommand(
+            `select-pane -t %${paneId} -T ${quoteTmuxArgument(normalized)}`,
+            TMUX_COMMAND_TOLERATE_ERRORS,
+        )
+        this.paneTitles.set(paneId, normalized)
+        this.events.next({ type: 'pane-renamed', paneId, data: { name: normalized } })
     }
 
     resizePane(_paneId: number, columns: number, rows: number): void {
@@ -1376,6 +1416,17 @@ export class TmuxController {
             this.logger.warn('Failed to create window:', e)
             return null
         }
+    }
+
+    /** Rename a window through tmux; the %window-renamed notification updates state. */
+    async renameWindow(windowId: number, name: string): Promise<void> {
+        const normalized = normalizeRename(name)
+        if (!normalized) return
+
+        await this.gateway.sendCommand(
+            `rename-window -t @${windowId} ${quoteTmuxArgument(normalized)}`,
+            TMUX_COMMAND_TOLERATE_ERRORS,
+        )
     }
 
     async killWindow(windowId: number): Promise<void> {
