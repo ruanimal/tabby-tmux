@@ -567,6 +567,14 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
                 label: this.translate.instant('Close'),
                 click: () => this.closePane(),
             },
+            { type: 'separator' },
+            {
+                label: this.translate.instant('Exit Tmux Mode'),
+                click: () => {
+                    const sessionTab = this.parent as any
+                    sessionTab?.onDisconnect?.()
+                },
+            },
         ]
         return items
     }
