@@ -70,6 +70,19 @@ describe('TmuxGateway sendCommand', () => {
         await expect(p).rejects.toThrow('Command timed out after 30ms')
     })
 
+    it('keeps a timed-out command response slot until its late response arrives', async () => {
+        const { gateway } = createGateway({ timeoutMs: 20 })
+        const timedOut = gateway.sendCommand('slow-command')
+        const next = gateway.sendCommand('next-command')
+
+        await expect(timedOut).rejects.toThrow('Command timed out after 20ms')
+
+        gateway.executeData(Buffer.from('%begin 1 1 1\nlate\n%end 1\n'))
+        gateway.executeData(Buffer.from('%begin 1 2 1\nnext\n%end 2\n'))
+
+        await expect(next).resolves.toBe('next')
+    })
+
     it('throws after detach()', async () => {
         const { gateway, written } = createGateway()
         gateway.detach()
@@ -137,6 +150,19 @@ describe('TmuxGateway sendKeys', () => {
         const p = gateway.sendCommand('list-windows')
         gateway.executeData(Buffer.from('%begin 1 4 1\nwin\n%end 4\n'))
         await expect(p).resolves.toBe('win')
+    })
+
+    it('keeps send-keys responses ahead of a concurrently queued command', async () => {
+        const { gateway } = createGateway()
+        gateway.sendKeys(Buffer.from('a'), 1)
+        const rename = gateway.sendCommand('rename-window -t @1 "editor"')
+
+        // The direct send-keys response must consume only its own response
+        // slot; otherwise the rename promise resolves with the wrong block.
+        gateway.executeData(Buffer.from('%begin 1 2 1\n%end 2\n'))
+        gateway.executeData(Buffer.from('%begin 1 3 1\nrenamed\n%end 3\n'))
+
+        await expect(rename).resolves.toBe('renamed')
     })
 })
 

@@ -16,6 +16,7 @@ interface PendingCommand {
     timestamp: number
 }
 
+type PendingResponse = { type: 'command'; command: PendingCommand } | { type: 'direct-write' }
 /**
  * TmuxGateway - Protocol layer for tmux control mode
  *
@@ -26,7 +27,13 @@ interface PendingCommand {
  * - Key encoding and sending
  */
 export class TmuxGateway {
-    private commandQueue: PendingCommand[] = []
+    /**
+     * Responses are tracked in the same order commands are written to tmux.
+     * This includes send-keys, whose response is intentionally fire-and-forget:
+     * Control Mode still emits a %begin/%end block for it, and that block must
+     * not consume the response promise of a command written afterwards.
+     */
+    private responseQueue: PendingResponse[] = []
     private currentCommand: PendingCommand | null = null
     private currentCommandId = ''
     private currentResponse: string[] = []
@@ -36,8 +43,6 @@ export class TmuxGateway {
     private detachSent = false
     private acceptNotifications = false
     private initialized = false
-    /** Number of fire-and-forget writes whose %begin/%end responses need consuming */
-    private directWritesPending = 0
     /** Incomplete line buffer for byte-level DCS parsing */
     private lineBuffer = ''
 
@@ -97,7 +102,7 @@ export class TmuxGateway {
                 flags,
                 timestamp: Date.now(),
             }
-            this.commandQueue.push(cmd)
+            this.responseQueue.push({ type: 'command', command: cmd })
             this.write(command + '\r')
             this.log.debug(`Sent command: ${command}`)
         })
@@ -106,8 +111,10 @@ export class TmuxGateway {
         let timer: ReturnType<typeof setTimeout>
         const timeout = new Promise<string>((_, reject) => {
             timer = setTimeout(() => {
-                // Remove the timed-out command from the queue so it won't
-                // consume a later response and cause command-id mismatch.
+                // The command was written to tmux immediately, so a timeout
+                // cannot cancel it. Keep its response slot until tmux sends the
+                // response; otherwise a late response would be assigned to the
+                // next command and corrupt the entire response sequence.
                 reject(new Error(`Command timed out after ${this.commandTimeoutMs}ms: ${command}`))
             }, this.commandTimeoutMs)
         })
@@ -124,10 +131,10 @@ export class TmuxGateway {
     /**
      * Send keystrokes to a specific pane.
      *
-     * Writes directly to the PTY — bypasses the command queue for zero-latency
-     * input.  tmux will still send %begin/%end for the send-keys command;
-     * parseBegin() tracks these via directWritesPending so they are consumed
-     * without trying to dequeue a queued command.
+     * Writes directly to the PTY for zero-latency input. Tmux still sends a
+     * %begin/%end response for each send-keys command, so each write is added
+     * to the response queue before it is sent. This keeps later queued command
+     * responses aligned even when the user types while a command is pending.
      */
     sendKeys(data: Buffer, paneId: number): void {
         if (this.disconnected) return
@@ -138,9 +145,10 @@ export class TmuxGateway {
             for (let i = 0; i < hex.length; i += this.sendKeysChunkSize) {
                 const chunk = hex.substring(i, i + this.sendKeysChunkSize)
                 const hexBytes = chunk.match(/.{2}/g)?.join(' ') || ''
-                // Write directly — bypasses command queue for zero-latency input
+                // Write directly — bypasses command queue for zero-latency input,
+                // but retain its response placeholder to preserve response order.
+                this.responseQueue.push({ type: 'direct-write' })
                 this.write(`send-keys -t %${paneId} -H ${hexBytes}\r`)
-                this.directWritesPending++
             }
         }
     }
@@ -306,21 +314,18 @@ export class TmuxGateway {
         this.currentResponse = []
         this.inResponseBlock = true
 
-        // If this response is for a fire-and-forget write (sendKeys),
-        // consume it without dequeuing a queued command.
-        if (this.commandQueue.length === 0 && this.directWritesPending > 0) {
-            this.directWritesPending--
+        const pendingResponse = this.responseQueue.shift()
+        if (pendingResponse?.type === 'command') {
+            this.currentCommand = pendingResponse.command
+        } else {
+            // Direct writes and server-initiated response blocks do not have a
+            // promise to resolve, but still occupy a response slot.
             this.currentCommand = null
-            return
         }
 
-        if (this.commandQueue.length === 0) {
-            // Server-initiated or unexpected response block
-            this.currentCommand = null
-            return
+        if (!pendingResponse) {
+            this.log.debug(`Received response for an unknown command: ${commandId}`)
         }
-
-        this.currentCommand = this.commandQueue.shift()!
     }
 
     private finishCurrentCommand(isError: boolean): void {
