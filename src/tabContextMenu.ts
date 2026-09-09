@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core'
 import { TabContextMenuItemProvider, MenuItemOptions, BaseTabComponent } from 'tabby-core'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { TmuxService } from './services/tmux.service'
+import { TmuxI18nService } from './services/tmuxI18n.service'
 import { TmuxSessionTabComponent } from './components/tmuxSessionTab.component'
 import { TmuxPaneTabComponent } from './components/tmuxPaneTab.component'
 
@@ -15,7 +16,10 @@ import { TmuxPaneTabComponent } from './components/tmuxPaneTab.component'
 export class TmuxContextMenuProvider extends TabContextMenuItemProvider {
     weight = 5
 
-    constructor(private tmuxService: TmuxService) {
+    constructor(
+        private tmuxService: TmuxService,
+        private i18n: TmuxI18nService,
+    ) {
         super()
     }
 
@@ -24,7 +28,7 @@ export class TmuxContextMenuProvider extends TabContextMenuItemProvider {
         if (tab instanceof TmuxSessionTabComponent) {
             return [
                 {
-                    label: 'Exit Tmux Mode',
+                    label: this.i18n.t('mode.exit'),
                     click: async () => {
                         await this.tmuxService.disconnect()
                     },
@@ -36,22 +40,31 @@ export class TmuxContextMenuProvider extends TabContextMenuItemProvider {
         if (tab instanceof TmuxPaneTabComponent) {
             const items: MenuItemOptions[] = [
                 {
-                    label: 'Exit Tmux Mode',
+                    label: this.i18n.t('mode.exit'),
                     click: async () => {
                         await this.tmuxService.disconnect()
                     },
                 },
                 {
-                    label: 'Split',
+                    label: this.i18n.t('pane.split'),
                     submenu: [
-                        { label: 'Right', click: () => this.splitPane(tab, 'right') },
-                        { label: 'Down', click: () => this.splitPane(tab, 'down') },
-                        { label: 'Left', click: () => this.splitPane(tab, 'left') },
-                        { label: 'Up', click: () => this.splitPane(tab, 'up') },
+                        {
+                            label: this.i18n.t('pane.right'),
+                            click: () => this.splitPane(tab, 'right'),
+                        },
+                        {
+                            label: this.i18n.t('pane.down'),
+                            click: () => this.splitPane(tab, 'down'),
+                        },
+                        {
+                            label: this.i18n.t('pane.left'),
+                            click: () => this.splitPane(tab, 'left'),
+                        },
+                        { label: this.i18n.t('pane.up'), click: () => this.splitPane(tab, 'up') },
                     ] as MenuItemOptions[],
                 },
                 {
-                    label: 'Close',
+                    label: this.i18n.t('pane.close'),
                     click: () => this.closePane(tab),
                 },
             ]
@@ -62,7 +75,7 @@ export class TmuxContextMenuProvider extends TabContextMenuItemProvider {
         if (tab instanceof BaseTerminalTabComponent) {
             return [
                 {
-                    label: 'Enter Tmux Mode',
+                    label: this.i18n.t('mode.enter'),
                     click: async () => {
                         await this.tmuxService.attachToTerminal(
                             tab as BaseTerminalTabComponent<any>,

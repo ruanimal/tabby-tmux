@@ -10,6 +10,7 @@ import {
 import { Subscription } from 'rxjs'
 import { ConfigService } from 'tabby-core'
 import { TmuxController } from '../session'
+import { TmuxI18nService } from '../services/tmuxI18n.service'
 
 interface WindowInfo {
     id: number
@@ -35,18 +36,22 @@ interface WindowInfo {
                     <span
                         class="window-close"
                         *ngIf="showCloseButton"
-                        title="Close Window"
+                        [title]="closeWindowTitle"
                         (click)="onCloseWindow($event, win)"
                     >
                         <i class="fas fa-times"></i>
                     </span>
                 </button>
-                <button class="window-tab add-btn" title="New Window" (click)="createWindow.emit()">
+                <button
+                    class="window-tab add-btn"
+                    [title]="newWindowTitle"
+                    (click)="createWindow.emit()"
+                >
                     <i class="fas fa-plus"></i>
                 </button>
             </div>
             <div class="bar-actions">
-                <button class="bar-btn" title="Disconnect" (click)="disconnect.emit()">
+                <button class="bar-btn" [title]="disconnectTitle" (click)="disconnect.emit()">
                     <i class="fas fa-eject"></i>
                 </button>
             </div>
@@ -187,18 +192,30 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
 
     windows: WindowInfo[] = []
 
+    closeWindowTitle = ''
+    newWindowTitle = ''
+    disconnectTitle = ''
+
     private subscription: Subscription
+    private languageSubscription: Subscription
 
     constructor(
         private cdr: ChangeDetectorRef,
         private configService: ConfigService,
-    ) {}
+        private i18n: TmuxI18nService,
+    ) {
+        this.updateLabels()
+    }
 
     get showCloseButton(): boolean {
         return this.configService?.store?.tmuxPlugin?.showWindowCloseButton ?? true
     }
 
     ngOnInit(): void {
+        this.languageSubscription = this.i18n.languageChange$.subscribe(() => {
+            this.updateLabels()
+            this.refreshWindows()
+        })
         this.refreshWindows()
 
         if (!this.controller) {
@@ -226,6 +243,7 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
 
     ngOnDestroy(): void {
         this.subscription?.unsubscribe()
+        this.languageSubscription?.unsubscribe()
     }
 
     private refreshWindows(): void {
@@ -238,10 +256,16 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
         const windowStates = this.controller.getAllWindowStates()
         this.windows = windowStates.map((ws) => ({
             id: ws.id,
-            name: ws.name,
+            name: ws.name || this.i18n.t('window.defaultName', { id: ws.id }),
             paneCount: ws.panes.size,
         }))
         this.cdr.detectChanges()
+    }
+
+    private updateLabels(): void {
+        this.closeWindowTitle = this.i18n.t('window.close')
+        this.newWindowTitle = this.i18n.t('window.new')
+        this.disconnectTitle = this.i18n.t('mode.disconnect')
     }
 
     onCloseWindow(event: MouseEvent, win: WindowInfo): void {

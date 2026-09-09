@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core'
-import { HotkeyDescription, HotkeyProvider, TranslateService } from 'tabby-core'
+import { HotkeyDescription, HotkeyProvider } from 'tabby-core'
+import { TmuxI18nService } from './services/tmuxI18n.service'
 
 /**
  * TmuxHotkeyProvider - hotkeys unique to tmux mode (window-level actions).
@@ -16,34 +17,41 @@ import { HotkeyDescription, HotkeyProvider, TranslateService } from 'tabby-core'
  */
 @Injectable()
 export class TmuxHotkeyProvider extends HotkeyProvider {
-    constructor(private translate: TranslateService) {
-        super()
-    }
+    hotkeys: HotkeyDescription[] = []
 
-    hotkeys: HotkeyDescription[] = [
-        {
-            id: 'tmuxPlugin.previous-window',
-            name: this.translate.instant('Tmux: Previous window'),
-        },
-        {
-            id: 'tmuxPlugin.next-window',
-            name: this.translate.instant('Tmux: Next window'),
-        },
-        ...Array.from({ length: 9 }, (_, i) => ({
-            id: `tmuxPlugin.window-${i + 1}`,
-            name: this.translate.instant(`Tmux: Go to window ${i + 1}`),
-        })),
-        {
-            id: 'tmuxPlugin.new-window',
-            name: this.translate.instant('Tmux: New window'),
-        },
-        {
-            id: 'tmuxPlugin.toggle-tmux-mode',
-            name: this.translate.instant('Tmux: Toggle tmux mode'),
-        },
-    ]
+    constructor(private i18n: TmuxI18nService) {
+        super()
+        this.updateHotkeys()
+        this.i18n.languageChange$.subscribe(() => this.updateHotkeys())
+    }
 
     async provide(): Promise<HotkeyDescription[]> {
         return this.hotkeys
+    }
+
+    private updateHotkeys(): void {
+        const hotkeys: HotkeyDescription[] = [
+            {
+                id: 'tmuxPlugin.previous-window',
+                name: this.i18n.t('hotkey.previousWindow'),
+            },
+            {
+                id: 'tmuxPlugin.next-window',
+                name: this.i18n.t('hotkey.nextWindow'),
+            },
+            ...Array.from({ length: 9 }, (_, i) => ({
+                id: `tmuxPlugin.window-${i + 1}`,
+                name: this.i18n.t('hotkey.goToWindow', { index: i + 1 }),
+            })),
+            {
+                id: 'tmuxPlugin.new-window',
+                name: this.i18n.t('hotkey.newWindow'),
+            },
+            {
+                id: 'tmuxPlugin.toggle-tmux-mode',
+                name: this.i18n.t('hotkey.toggleMode'),
+            },
+        ]
+        this.hotkeys.splice(0, this.hotkeys.length, ...hotkeys)
     }
 }

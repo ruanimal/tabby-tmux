@@ -428,7 +428,7 @@ export class TmuxController {
             if (!this.windowStates.has(windowId)) {
                 this.windowStates.set(windowId, {
                     id: windowId,
-                    name: `Window ${windowId}`,
+                    name: '',
                     panes: new Set(),
                 })
             }
@@ -689,7 +689,7 @@ export class TmuxController {
                     if (!windowState) {
                         windowState = {
                             id: windowId,
-                            name: `Window ${windowId}`,
+                            name: '',
                             panes: new Set(),
                         }
                         this.windowStates.set(windowId, windowState)

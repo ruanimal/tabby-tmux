@@ -23,6 +23,7 @@ import { Frontend } from 'tabby-terminal'
 import { TabRecoveryService } from 'tabby-core'
 import { TmuxController } from '../session'
 import { TmuxService } from '../services/tmux.service'
+import { TmuxI18nService } from '../services/tmuxI18n.service'
 import { TMUX_COMMAND_TOLERATE_ERRORS } from '../gateway'
 import { TmuxPaneTabComponent } from './tmuxPaneTab.component'
 import { parseTmuxLayout, TmuxLayoutNode, flattenLayout } from '../layoutParser'
@@ -182,6 +183,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     constructor(
         injector: Injector,
         private tmuxService: TmuxService,
+        private i18n: TmuxI18nService,
         private configService: ConfigService,
         tabsService: TabsService,
         private cdr: ChangeDetectorRef,
@@ -192,6 +194,10 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         super(injector.get(HotkeysService), tabsService, injector.get(TabRecoveryService), injector)
         this._tabsService = tabsService
         this.logger = log.create('tmux-session')
+        this.subscribeUntilDestroyed(this.i18n.languageChange$, () => {
+            this.updateSessionTitle()
+            this.cdr.detectChanges()
+        })
 
         // Route the 'search' hotkey to our own session-level search panel.
         // The built-in per-pane panel cannot work in tmux mode (all panes
@@ -231,6 +237,10 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         })
     }
 
+    private updateSessionTitle(): void {
+        this.setTitle(this.i18n.t('title.session', { name: this.sessionName }))
+    }
+
     ngOnInit(): void {
         this.logger.info('ngOnInit initialized')
         this.controller = this.existingController
@@ -241,7 +251,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         }
 
         this.sessionName = this.controller.getSessionName() || this.profile.sessionName || 'default'
-        this.setTitle(`Tmux: ${this.sessionName}`)
+        this.updateSessionTitle()
 
         // Subscribe to controller events.
         // Events are queued to ensure serial async processing — critical because
@@ -384,7 +394,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 this.connected = true
                 this.sessionName =
                     this.controller?.getSessionName() || this.profile.sessionName || 'default'
-                this.setTitle(`Tmux: ${this.sessionName}`)
+                this.updateSessionTitle()
                 this.cdr.detectChanges()
                 break
 

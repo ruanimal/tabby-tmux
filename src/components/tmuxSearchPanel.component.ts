@@ -1,7 +1,8 @@
 import { Component, Input, Output, EventEmitter, OnDestroy } from '@angular/core'
-import { Subject, debounceTime } from 'rxjs'
+import { Subject, debounceTime, Subscription } from 'rxjs'
 import { Frontend } from 'tabby-terminal'
-import { ConfigService, NotificationsService, TranslateService } from 'tabby-core'
+import { ConfigService, NotificationsService } from 'tabby-core'
+import { TmuxI18nService } from '../services/tmuxI18n.service'
 
 /** Structural copies of tabby-terminal's SearchOptions/SearchState (not exported). */
 export interface SearchOptions {
@@ -52,7 +53,7 @@ export interface SearchState {
                     (keyup.up)="findPrevious()"
                     (keyup.down)="findNext()"
                     (keyup.esc)="close.emit()"
-                    placeholder="Search"
+                    [placeholder]="i18n.t('search.placeholder')"
                 />
                 <div class="input-group-text result-counter" *ngIf="state.resultCount > 0">
                     {{ (state.resultIndex ?? 0) + 1 }} / {{ state.resultCount }}
@@ -116,20 +117,23 @@ export class TmuxSearchPanelComponent implements OnDestroy {
 
     @Output() close = new EventEmitter()
 
-    searchUpLabel = this.translate.instant('Search up')
-    searchDownLabel = this.translate.instant('Search down')
-    caseSensitiveLabel = this.translate.instant('Case sensitivity')
-    regexLabel = this.translate.instant('Regular expression')
-    wholeWordLabel = this.translate.instant('Whole word')
-    closeLabel = this.translate.instant('Close')
+    searchUpLabel = ''
+    searchDownLabel = ''
+    caseSensitiveLabel = ''
+    regexLabel = ''
+    wholeWordLabel = ''
+    closeLabel = ''
 
     private queryChanged = new Subject<string>()
+    private languageSubscription: Subscription
 
     constructor(
         private notifications: NotificationsService,
-        private translate: TranslateService,
+        public i18n: TmuxI18nService,
         public config: ConfigService,
     ) {
+        this.updateLabels()
+        this.languageSubscription = this.i18n.languageChange$.subscribe(() => this.updateLabels())
         this.queryChanged.pipe(debounceTime(250)).subscribe(() => {
             this.findPrevious(true)
         })
@@ -149,7 +153,7 @@ export class TmuxSearchPanelComponent implements OnDestroy {
             incremental: incremental || undefined,
         })
         if (!this.state.resultCount) {
-            this.notifications.notice(this.translate.instant('Not found'))
+            this.notifications.notice(this.i18n.t('search.notFound'))
         }
     }
 
@@ -162,7 +166,7 @@ export class TmuxSearchPanelComponent implements OnDestroy {
             incremental: incremental || undefined,
         })
         if (!this.state.resultCount) {
-            this.notifications.notice(this.translate.instant('Not found'))
+            this.notifications.notice(this.i18n.t('search.notFound'))
         }
     }
 
@@ -175,5 +179,15 @@ export class TmuxSearchPanelComponent implements OnDestroy {
 
     ngOnDestroy(): void {
         this.queryChanged.complete()
+        this.languageSubscription.unsubscribe()
+    }
+
+    private updateLabels(): void {
+        this.searchUpLabel = this.i18n.t('search.up')
+        this.searchDownLabel = this.i18n.t('search.down')
+        this.caseSensitiveLabel = this.i18n.t('search.caseSensitive')
+        this.regexLabel = this.i18n.t('search.regex')
+        this.wholeWordLabel = this.i18n.t('search.wholeWord')
+        this.closeLabel = this.i18n.t('common.close')
     }
 }

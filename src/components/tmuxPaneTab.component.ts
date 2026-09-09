@@ -3,6 +3,7 @@ import { first } from 'rxjs'
 import { BaseTerminalTabComponent } from 'tabby-terminal'
 import { MenuItemOptions } from 'tabby-core'
 import { TmuxController, TmuxPaneSession, SyncScope } from '../session'
+import { TmuxI18nService } from '../services/tmuxI18n.service'
 
 @Component({
     selector: 'tmux-pane-tab',
@@ -70,9 +71,23 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     private _scrollbarDragging = false
     /** "Exit zoom" chip shown in the pane's top-right corner while zoomed. */
     private _zoomIndicator: HTMLElement | null = null
+    private i18n: TmuxI18nService
 
     constructor(injector: Injector) {
         super(injector)
+        this.i18n = injector.get(TmuxI18nService)
+        this.subscribeUntilDestroyed(this.i18n.languageChange$, () => {
+            if (this.paneId !== undefined && this.paneId !== null) {
+                if (this.profile) {
+                    this.profile.name = this.i18n.t('title.paneProfile', { id: this.paneId })
+                }
+                this.setTitle(this.i18n.t('title.pane', { id: this.paneId }))
+                if (this._zoomIndicator) {
+                    this._zoomIndicator.title = this.i18n.t('zoom.exit')
+                    this._zoomIndicator.textContent = this.i18n.t('zoom.exit')
+                }
+            }
+        })
         // The host element is the pane container positioned by
         // TmuxSessionTabComponent.applyPixelLayout().
         this._paneHost = injector.get(ElementRef<HTMLElement>).nativeElement
@@ -110,14 +125,14 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
         // Profile must be set BEFORE calling super.ngOnInit() because
         // the parent class configures the terminal frontend using profile settings
         this.profile = {
-            name: `Tmux Pane %${this.paneId}`,
+            name: this.i18n.t('title.paneProfile', { id: this.paneId }),
             type: 'tmux',
             options: {},
             // Required properties for BaseTerminalTabComponent
             behaviorOnSessionEnd: 'close',
             terminalColorScheme: null, // Use default
         }
-        this.setTitle(`Pane %${this.paneId}`)
+        this.setTitle(this.i18n.t('title.pane', { id: this.paneId }))
 
         // Now call parent's ngOnInit to set up the frontend.
         // NOTE: super.ngOnInit() schedules a setImmediate that checks
@@ -500,7 +515,7 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
 
     // Override generic title behavior
     getCustomTitle(): string {
-        return `Tmux Pane %${this.paneId}`
+        return this.i18n.t('title.paneProfile', { id: this.paneId })
     }
     /**
      * Override the native context menu to provide tmux-specific items only.
@@ -511,32 +526,32 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     async buildContextMenu(): Promise<MenuItemOptions[]> {
         const items: MenuItemOptions[] = [
             {
-                label: this.translate.instant('Copy'),
+                label: this.i18n.t('pane.copy'),
                 click: () => this.frontend?.copySelection(),
             },
             {
-                label: this.translate.instant('Paste'),
+                label: this.i18n.t('pane.paste'),
                 click: () => this.paste(),
             },
             {
-                label: this.translate.instant('Search'),
+                label: this.i18n.t('search.placeholder'),
                 click: () => this.openSearchPanel(),
             },
             { type: 'separator' },
             {
-                label: this.translate.instant('Split'),
+                label: this.i18n.t('pane.split'),
                 submenu: [
                     {
-                        label: this.translate.instant('Right'),
+                        label: this.i18n.t('pane.right'),
                         click: () => this.splitPane('right'),
                     },
-                    { label: this.translate.instant('Down'), click: () => this.splitPane('down') },
-                    { label: this.translate.instant('Left'), click: () => this.splitPane('left') },
-                    { label: this.translate.instant('Up'), click: () => this.splitPane('up') },
+                    { label: this.i18n.t('pane.down'), click: () => this.splitPane('down') },
+                    { label: this.i18n.t('pane.left'), click: () => this.splitPane('left') },
+                    { label: this.i18n.t('pane.up'), click: () => this.splitPane('up') },
                 ] as MenuItemOptions[],
             },
             {
-                label: this.translate.instant('Zoom pane'),
+                label: this.i18n.t('pane.zoom'),
                 type: 'checkbox',
                 checked: this._isZoomed,
                 // tmux resize-pane -Z on a single-pane window is a no-op
@@ -546,16 +561,16 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
                 click: () => this.toggleZoom(),
             },
             {
-                label: this.translate.instant('Focus all tmux panes'),
+                label: this.i18n.t('pane.focusAll'),
                 submenu: [
                     {
-                        label: this.translate.instant('Current window'),
+                        label: this.i18n.t('window.current'),
                         type: 'checkbox',
                         checked: this.controller?.getSyncScope() === 'window',
                         click: () => this.toggleSyncInput('window'),
                     },
                     {
-                        label: this.translate.instant('All windows'),
+                        label: this.i18n.t('window.all'),
                         type: 'checkbox',
                         checked: this.controller?.getSyncScope() === 'all',
                         click: () => this.toggleSyncInput('all'),
@@ -564,12 +579,12 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
             },
             { type: 'separator' },
             {
-                label: this.translate.instant('Close'),
+                label: this.i18n.t('pane.close'),
                 click: () => this.closePane(),
             },
             { type: 'separator' },
             {
-                label: this.translate.instant('Exit Tmux Mode'),
+                label: this.i18n.t('mode.exit'),
                 click: () => {
                     const sessionTab = this.parent as any
                     sessionTab?.onDisconnect?.()
@@ -643,8 +658,8 @@ export class TmuxPaneTabComponent extends BaseTerminalTabComponent<any> implemen
     private createZoomIndicator(): void {
         const indicator = document.createElement('div')
         indicator.className = 'tmux-pane-zoom-indicator'
-        indicator.title = this.translate.instant('Exit zoom')
-        indicator.textContent = this.translate.instant('Exit zoom')
+        indicator.title = this.i18n.t('zoom.exit')
+        indicator.textContent = this.i18n.t('zoom.exit')
 
         // Keep the click away from the pane: mousedown would otherwise
         // focus/select inside the xterm, and the click would bubble to the
