@@ -437,6 +437,32 @@ describe('TmuxController', () => {
         expect(controller.isPaneZoomed(5)).toBe(false)
     })
 
+    it('discovers pane titles for panes found in layout changes', async () => {
+        const { controller, written } = createController()
+        const controllerInternals = controller as unknown as {
+            capturePaneSnapshots: (
+                paneIds: Array<{ paneId: number; windowId: number }>,
+            ) => Promise<boolean>
+            discoverWindowsAndPanes: () => Promise<void>
+        }
+        const capturePaneSnapshots = vi
+            .spyOn(controllerInternals, 'capturePaneSnapshots')
+            .mockResolvedValue(true)
+        vi.spyOn(controllerInternals, 'discoverWindowsAndPanes').mockResolvedValue(undefined)
+        await initController(controller)
+        controller.gateway.executeLine('%window-add @0')
+
+        controller.gateway.executeLine('%layout-change @0 aa,80x24,0,0,7 aa,80x24,0,0,7 *')
+        await waitForWrite(written, (writes) =>
+            writes.some((write) => write.startsWith('list-panes -t @0 -F')),
+        )
+        controller.gateway.executeData(Buffer.from('%begin 1 2 1\n%7 editor\\ pane\n%end 2\n'))
+
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        expect(controller.getPaneTitle(7)).toBe('editor pane')
+        expect(capturePaneSnapshots).toHaveBeenCalledWith([{ paneId: 7, windowId: 0 }])
+    })
+
     it('reports the pane count of the owning window for the zoom toggle', async () => {
         const { controller } = createController()
         controller.setClientSizePushed()

@@ -11,11 +11,14 @@ import { Subscription } from 'rxjs'
 import { ConfigService, MenuItemOptions, PlatformService } from 'tabby-core'
 import { TmuxController } from '../session'
 import { TmuxI18nService } from '../services/tmuxI18n.service'
+import { formatTmuxWindowTooltip, TmuxPaneTooltipData } from './tmuxWindowTooltip'
 
 interface WindowInfo {
     id: number
     name: string
     paneCount: number
+    panes: TmuxPaneTooltipData[]
+    tooltip: string
 }
 
 @Component({
@@ -29,14 +32,14 @@ interface WindowInfo {
                     [class.active]="win.id === activeWindowId"
                     (click)="windowSwitch.emit(win.id)"
                     (contextmenu)="onContextMenu($event, win)"
-                    [title]="win.name"
+                    [title]="win.tooltip"
                 >
                     <span class="window-name">{{ win.name }}</span>
                     <span class="pane-badge" *ngIf="win.paneCount > 1">{{ win.paneCount }}</span>
                     <span
                         class="window-close"
                         *ngIf="showCloseButton"
-                        [title]="closeWindowTitle"
+                        [attr.aria-label]="closeWindowTitle"
                         (click)="onCloseWindow($event, win)"
                     >
                         <i class="fas fa-times"></i>
@@ -232,6 +235,8 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
                 case 'window-renamed':
                 case 'pane-add':
                 case 'pane-close':
+                case 'active-pane-changed':
+                case 'pane-renamed':
                 case 'initialized':
                     this.refreshWindows()
                     break
@@ -250,18 +255,33 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
     }
 
     private refreshWindows(): void {
-        if (!this.controller) {
+        const controller = this.controller
+        if (!controller) {
             this.windows = []
             this.cdr.detectChanges()
             return
         }
 
-        const windowStates = this.controller.getAllWindowStates()
-        this.windows = windowStates.map((ws) => ({
-            id: ws.id,
-            name: ws.name || this.i18n.t('window.defaultName', { id: ws.id }),
-            paneCount: ws.panes.size,
-        }))
+        const windowStates = controller.getAllWindowStates()
+        this.windows = windowStates.map((ws) => {
+            const name = ws.name || this.i18n.t('window.defaultName', { id: ws.id })
+            const activePaneId = controller.getActivePaneId(ws.id)
+            const panes = Array.from(ws.panes).map((paneId) => ({
+                id: paneId,
+                title: controller.getPaneTitle(paneId),
+                active: paneId === activePaneId,
+            }))
+
+            return {
+                id: ws.id,
+                name,
+                paneCount: panes.length,
+                panes,
+                tooltip: formatTmuxWindowTooltip({ id: ws.id, name, panes }, (params) =>
+                    this.i18n.t('window.tooltip', params),
+                ),
+            }
+        })
         this.cdr.detectChanges()
     }
 

@@ -917,7 +917,11 @@ export class TmuxController {
                 // pane-add and layout-change.
                 return
             } else {
-                // Emit pane-add events — history is now pre-loaded
+                await this.discoverPaneTitles(
+                    windowId,
+                    new Set(newPaneIds.map(({ paneId }) => paneId)),
+                )
+                // Emit pane-add events — history and title metadata are now pre-loaded
                 for (const { paneId, windowId: wid } of newPaneIds) {
                     this.events.next({ type: 'pane-add', paneId, windowId: wid })
                 }
@@ -933,6 +937,40 @@ export class TmuxController {
             windowId,
             data: { layout, visibleLayout, zoomed },
         })
+    }
+
+    /**
+     * Load titles for panes discovered from a layout change.
+     *
+     * Batch discovery already gets pane titles from list-panes -s. Runtime
+     * layout discovery only has pane IDs, so query the affected window before
+     * emitting pane-add; this keeps window-bar metadata complete for splits.
+     */
+    private async discoverPaneTitles(windowId: number, paneIds: Set<number>): Promise<void> {
+        if (paneIds.size === 0) return
+
+        try {
+            const result = await this.gateway.sendCommand(
+                `list-panes -t @${windowId} -F "#{pane_id} #{q:pane_title}"`,
+                TMUX_COMMAND_TOLERATE_ERRORS,
+            )
+            const lines = result
+                .split(/[\r\n]+/)
+                .map((line) => line.trim())
+                .filter((line) => line)
+
+            for (const line of lines) {
+                const match = line.match(/^%?(\d+)(?:\s+((?:[^\\ ]|\\.)+))?$/)
+                if (!match) continue
+
+                const paneId = parseInt(match[1])
+                if (paneIds.has(paneId)) {
+                    this.paneTitles.set(paneId, match[2] ? unescapeTmuxValue(match[2]) : '')
+                }
+            }
+        } catch (e) {
+            this.log.warn(`Failed to discover pane titles for window @${windowId}:`, e)
+        }
     }
 
     /**
