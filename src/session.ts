@@ -300,6 +300,9 @@ export class TmuxController {
     /** Pre-loaded history from batch discovery (iTerm2-style). */
     private pendingSnapshots = new Map<number, PaneSnapshot>()
     private sessionName = ''
+    /** Hostname of the machine running the tmux server. */
+    private hostName = ''
+    private hostRefreshPromise: Promise<void> | null = null
     private attached = false
     /** Session-level active window (single value, from #{window_active} / %session-window-changed) */
     private activeWindowId: number | null = null
@@ -797,6 +800,11 @@ export class TmuxController {
                     })
                 }
             }
+
+            // Hostname is server-level metadata. Query it after window/pane
+            // discovery so the session tab can render its dynamic title as
+            // soon as both parts of the title are available.
+            await this.refreshHostName()
         } catch (e) {
             this.logger.warn('Failed to batch discover windows/panes:', e)
         }
@@ -1525,6 +1533,48 @@ export class TmuxController {
 
     getSessionName(): string {
         return this.sessionName
+    }
+
+    /**
+     * Query and cache the hostname of the machine running the tmux server.
+     *
+     * The value is server-level, so it is queried once per controller rather
+     * than once per window or pane change. Failed or empty responses keep the
+     * previous value so the UI can continue using its fallback title.
+     */
+    async refreshHostName(): Promise<void> {
+        if (this.hostName) return
+        if (this.hostRefreshPromise) return this.hostRefreshPromise
+
+        const refresh = (async () => {
+            try {
+                const result = await this.gateway.sendCommand('display-message -p "#{host}"')
+                const hostName = result
+                    .split(/\r?\n/)
+                    .map((line) => line.trim())
+                    .find((line) => line.length > 0)
+
+                if (!hostName || hostName === this.hostName) return
+
+                this.hostName = hostName
+                this.events.next({ type: 'host-changed', data: { hostName } })
+            } catch (e) {
+                this.logger.warn('Failed to discover tmux server hostname:', e)
+            }
+        })()
+
+        this.hostRefreshPromise = refresh
+        try {
+            await refresh
+        } finally {
+            if (this.hostRefreshPromise === refresh) {
+                this.hostRefreshPromise = null
+            }
+        }
+    }
+
+    getHostName(): string {
+        return this.hostName
     }
 
     getWindowState(windowId: number): WindowState | undefined {

@@ -204,6 +204,59 @@ describe('TmuxController', () => {
         expect(controller.getActiveWindowId()).toBe(3)
     })
 
+    it('discovers and caches the tmux server hostname', async () => {
+        const { controller, written } = createController()
+        const hostChanges: Array<{ hostName: string }> = []
+        controller.events.subscribe((event) => {
+            if (event.type === 'host-changed') {
+                hostChanges.push(event.data)
+            }
+        })
+
+        const refresh = controller.refreshHostName()
+        await waitForWrite(written, (writes) => writes.includes('display-message -p "#{host}"\r'))
+        controller.gateway.executeData(Buffer.from('%begin 1 1 1\npupu-MBP.local\n%end 1\n'))
+        await refresh
+
+        expect(controller.getHostName()).toBe('pupu-MBP.local')
+        expect(hostChanges).toEqual([{ hostName: 'pupu-MBP.local' }])
+
+        const writeCount = written.filter((write) =>
+            write.startsWith('display-message -p "#{host}"'),
+        ).length
+        await controller.refreshHostName()
+        expect(
+            written.filter((write) => write.startsWith('display-message -p "#{host}"')).length,
+        ).toBe(writeCount)
+    })
+
+    it('does not cache an empty hostname response', async () => {
+        const { controller, written } = createController()
+        const gateway = controller.gateway as unknown as {
+            initialized: boolean
+            acceptNotifications: boolean
+        }
+        gateway.initialized = true
+        gateway.acceptNotifications = true
+
+        const firstRefresh = controller.refreshHostName()
+        await waitForWrite(written, (writes) => writes.includes('display-message -p "#{host}"\r'))
+        controller.gateway.executeData(Buffer.from('%begin 1 1 1\n%end 1\n'))
+        await firstRefresh
+        expect(controller.getHostName()).toBe('')
+
+        const secondRefresh = controller.refreshHostName()
+        await waitForWrite(
+            written,
+            (writes) =>
+                writes.filter((write) => write.startsWith('display-message -p "#{host}"'))
+                    .length === 2,
+        )
+        controller.gateway.executeData(Buffer.from('%begin 1 2 1\nremote\n%end 2\n'))
+        await secondRefresh
+        expect(controller.getHostName()).toBe('remote')
+    })
+
     it('registers windows via %window-add and applies renames', async () => {
         const { controller } = createController()
         await initController(controller)

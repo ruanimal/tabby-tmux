@@ -6,6 +6,7 @@ import {
     OnDestroy,
     ChangeDetectorRef,
     ElementRef,
+    NgZone,
 } from '@angular/core'
 import { Subscription } from 'rxjs'
 import {
@@ -30,6 +31,7 @@ import { parseTmuxLayout, TmuxLayoutNode, flattenLayout } from '../layoutParser'
 import { renderDividers } from '../divider'
 import { ResizeDirection, SplitDirection } from '../tmuxKeymap'
 import { normalizeRename } from '../tmuxRename'
+import { formatTmuxSessionTitle } from '../tmuxTitle'
 
 export interface TmuxSessionProfile {
     sessionName?: string
@@ -167,6 +169,13 @@ interface RenameRequest {
     ],
 })
 export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit, OnDestroy {
+    /**
+     * SplitTabComponent otherwise replaces the session title with the
+     * concatenated title of its child panes whenever a pane is attached or
+     * renamed. The session tab owns its title, so keep that aggregation off.
+     */
+    override disableDynamicTitle = true
+
     @Input() profile: TmuxSessionProfile = {}
     @Input() existingController!: TmuxController
 
@@ -181,6 +190,8 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
     controller: TmuxController | null = null
     activeWindowId: number | null = null
+    /** Optimistic window target used to update the title before pane views finish mounting. */
+    private pendingTitleWindowId: number | null = null
     connected = false
     /** Session-level search panel state (replaces the built-in per-pane panel) */
     searchPanelOpen = false
@@ -209,6 +220,7 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         private cdr: ChangeDetectorRef,
         private hostElement: ElementRef,
         private hotkeysService: HotkeysService,
+        private zone: NgZone,
         log: LogService,
     ) {
         super(injector.get(HotkeysService), tabsService, injector.get(TabRecoveryService), injector)
@@ -257,8 +269,35 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         })
     }
 
+    private getSessionFallbackTitle(): string {
+        const sessionName =
+            this.sessionName ||
+            this.controller?.getSessionName() ||
+            this.profile.sessionName ||
+            'default'
+        return this.i18n.t('title.session', { name: sessionName })
+    }
+
+    /**
+     * Resolve the top-level tab title from the current tmux window and server.
+     * The fallback preserves the original session-name priority while tmux
+     * metadata is still being discovered or is unavailable.
+     */
+    getCustomTitle(): string {
+        const activeWindowId =
+            this.pendingTitleWindowId ?? this.activeWindowId ?? this.controller?.getActiveWindowId()
+        const windowName =
+            activeWindowId !== null && activeWindowId !== undefined
+                ? this.controller?.getWindowState(activeWindowId)?.name
+                : undefined
+        const hostName = this.controller?.getHostName()
+
+        return formatTmuxSessionTitle(this.getSessionFallbackTitle(), windowName, hostName)
+    }
+
     private updateSessionTitle(): void {
-        this.setTitle(this.i18n.t('title.session', { name: this.sessionName }))
+        const title = this.getCustomTitle()
+        this.zone.run(() => this.setTitle(title))
     }
 
     ngOnInit(): void {
@@ -279,6 +318,21 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         // that must not interleave. Without serialization, concurrent switches from
         // multiple window-add events (during refreshPanes) corrupt activeWindowId.
         this.eventSubscription = this.controller.events.subscribe((event) => {
+            // Title updates are intentionally handled before the serialized view
+            // queue. Pane mounting and layout synchronization can take much
+            // longer than the metadata update needed by the top-level tab title.
+            if (event.type === 'active-window-changed' && event.windowId !== undefined) {
+                this.pendingTitleWindowId = event.windowId
+            }
+            if (
+                event.type === 'active-window-changed' ||
+                event.type === 'window-renamed' ||
+                event.type === 'host-changed'
+            ) {
+                this.updateSessionTitle()
+                this.cdr.detectChanges()
+            }
+
             this.eventQueue = this.eventQueue.then(() => this.handleControllerEvent(event))
         })
 
@@ -486,6 +540,13 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
                 }
                 break
 
+            case 'active-window-changed':
+            case 'window-renamed':
+            case 'host-changed':
+                this.updateSessionTitle()
+                this.cdr.detectChanges()
+                break
+
             case 'layout-change':
                 // NOTE: We always call syncLayout for the active window.
                 // For non-active windows, we save the layout but don't rebuild
@@ -530,9 +591,24 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
      * leave it false — they follow tmux instead of leading it.
      */
     enqueueSwitchToWindow(windowId: number, syncToTmux = false): void {
+        if (syncToTmux && windowId !== this.activeWindowId) {
+            // The user-visible title can switch as soon as the target is known;
+            // pane detach/mount work remains serialized below.
+            this.pendingTitleWindowId = windowId
+            this.updateSessionTitle()
+            this.cdr.detectChanges()
+        }
+
         this.eventQueue = this.eventQueue
             .then(() => this.switchToWindow(windowId, syncToTmux))
-            .catch((err) => this.logger.warn('switchToWindow failed:', err))
+            .catch((err) => {
+                if (this.pendingTitleWindowId === windowId) {
+                    this.pendingTitleWindowId = null
+                    this.updateSessionTitle()
+                    this.cdr.detectChanges()
+                }
+                this.logger.warn('switchToWindow failed:', err)
+            })
     }
 
     /**
@@ -600,8 +676,8 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             // be out of sync (tmux's active window changed on another client,
             // or attach restored a different window) — a user-initiated click
             // must re-align tmux anyway, so still send select-window. It is a
-            // no-op on the tmux side and only re-emits %session-window-changed
-            // (which has no SessionTab event case, so no feedback loop).
+            // no-op on the tmux side and only re-emits the active-window event,
+            // which refreshes the title without rebuilding the pane views.
             if (syncToTmux && this.controller) {
                 this.controller.gateway
                     .sendCommand(`select-window -t @${windowId}`, TMUX_COMMAND_TOLERATE_ERRORS)
@@ -633,6 +709,13 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
 
         // 2. Update active window
         this.activeWindowId = windowId
+        if (this.pendingTitleWindowId === windowId || !syncToTmux) {
+            this.pendingTitleWindowId = null
+        }
+        // Refresh the top-level title before the potentially expensive pane
+        // discovery and view mounting below.
+        this.updateSessionTitle()
+        this.cdr.detectChanges()
 
         // Sync a USER-INITIATED window switch to tmux via select-window, so the
         // tmux-side active window follows the window bar. Without this, tmux
@@ -641,9 +724,9 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         // re-attach the session restores tmux's stale active window instead of
         // the window the user was actually looking at.
         //
-        // select-window replies with %session-window-changed, which only
-        // updates controller.activeWindowId (there is no SessionTab event case
-        // for it), so no feedback loop forms. Internal restore paths
+        // select-window replies with %session-window-changed. The lightweight
+        // event handler refreshes the title immediately, while the serialized
+        // view work continues independently.
         // (bootstrap, window-add, initial switch) must NOT sync — they follow
         // tmux instead of leading it.
         if (syncToTmux && this.controller) {
