@@ -31,7 +31,8 @@ import { parseTmuxLayout, TmuxLayoutNode, flattenLayout } from '../layoutParser'
 import { renderDividers } from '../divider'
 import { ResizeDirection, SplitDirection } from '../tmuxKeymap'
 import { normalizeRename } from '../tmuxRename'
-import { formatTmuxSessionTitle } from '../tmuxTitle'
+import { formatTmuxTitle } from '../tmuxTitle'
+import { TmuxConfigChangeService } from '../services/tmuxConfigChange.service'
 
 export interface TmuxSessionProfile {
     sessionName?: string
@@ -221,12 +222,17 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
         private hostElement: ElementRef,
         private hotkeysService: HotkeysService,
         private zone: NgZone,
+        private configChanges: TmuxConfigChangeService,
         log: LogService,
     ) {
         super(injector.get(HotkeysService), tabsService, injector.get(TabRecoveryService), injector)
         this._tabsService = tabsService
         this.logger = log.create('tmux-session')
         this.subscribeUntilDestroyed(this.i18n.languageChange$, () => {
+            this.updateSessionTitle()
+            this.cdr.detectChanges()
+        })
+        this.subscribeUntilDestroyed(this.configChanges.changed$, () => {
             this.updateSessionTitle()
             this.cdr.detectChanges()
         })
@@ -279,20 +285,45 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
     }
 
     /**
-     * Resolve the top-level tab title from the current tmux window and server.
-     * The fallback preserves the original session-name priority while tmux
-     * metadata is still being discovered or is unavailable.
+     * Resolve the top-level tab title from the current tmux window, pane and
+     * server metadata. Pending window selection is intentionally preferred so
+     * the title can update before the pane views finish mounting.
      */
     getCustomTitle(): string {
         const activeWindowId =
             this.pendingTitleWindowId ?? this.activeWindowId ?? this.controller?.getActiveWindowId()
-        const windowName =
+        const windowState =
             activeWindowId !== null && activeWindowId !== undefined
-                ? this.controller?.getWindowState(activeWindowId)?.name
+                ? this.controller?.getWindowState(activeWindowId)
                 : undefined
-        const hostName = this.controller?.getHostName()
+        const activePaneId =
+            activeWindowId !== null && activeWindowId !== undefined
+                ? this.controller?.getActivePaneId(activeWindowId)
+                : null
+        const paneTitle =
+            activePaneId !== null && activePaneId !== undefined
+                ? this.controller?.getPaneTitle(activePaneId)
+                : undefined
+        const sessionName =
+            this.sessionName ||
+            this.controller?.getSessionName() ||
+            this.profile.sessionName ||
+            'default'
 
-        return formatTmuxSessionTitle(this.getSessionFallbackTitle(), windowName, hostName)
+        return formatTmuxTitle(
+            this.getSessionFallbackTitle(),
+            this.configService?.store?.tmuxPlugin?.sessionTitleFormat,
+            {
+                sessionName,
+                windowName: windowState?.name,
+                windowId: activeWindowId,
+                windowIndex: windowState?.index,
+                paneName: paneTitle,
+                paneTitle,
+                paneId: activePaneId,
+                hostName: this.controller?.getHostName(),
+            },
+        )
     }
 
     private updateSessionTitle(): void {
@@ -326,8 +357,11 @@ export class TmuxSessionTabComponent extends SplitTabComponent implements OnInit
             }
             if (
                 event.type === 'active-window-changed' ||
+                event.type === 'active-pane-changed' ||
                 event.type === 'window-renamed' ||
-                event.type === 'host-changed'
+                event.type === 'pane-renamed' ||
+                event.type === 'host-changed' ||
+                event.type === 'session-changed'
             ) {
                 this.updateSessionTitle()
                 this.cdr.detectChanges()

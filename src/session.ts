@@ -724,16 +724,7 @@ export class TmuxController {
                     const paneId = parseInt(match[1])
                     const windowId = parseInt(match[2])
                     const paneTitle = match[4] ? unescapeTmuxValue(match[4]) : ''
-                    const previousPaneTitle = this.paneTitles.get(paneId)
-                    this.paneTitles.set(paneId, paneTitle)
-                    if (previousPaneTitle !== undefined && previousPaneTitle !== paneTitle) {
-                        this.events.next({
-                            type: 'pane-renamed',
-                            paneId,
-                            windowId,
-                            data: { name: paneTitle },
-                        })
-                    }
+                    this.updatePaneTitle(paneId, windowId, paneTitle)
                     if (match[3] === '1') {
                         this.windowActivePanes.set(windowId, paneId)
                     }
@@ -947,6 +938,27 @@ export class TmuxController {
         })
     }
 
+    private updatePaneTitle(
+        paneId: number,
+        windowId: number | undefined,
+        paneTitle: string,
+        emitWhenUnknown = false,
+    ): void {
+        const previousPaneTitle = this.paneTitles.get(paneId)
+        this.paneTitles.set(paneId, paneTitle)
+        if (
+            (previousPaneTitle !== undefined && previousPaneTitle !== paneTitle) ||
+            (emitWhenUnknown && previousPaneTitle === undefined)
+        ) {
+            this.events.next({
+                type: 'pane-renamed',
+                paneId,
+                windowId,
+                data: { name: paneTitle },
+            })
+        }
+    }
+
     /**
      * Load titles for panes discovered from a layout change.
      *
@@ -972,8 +984,9 @@ export class TmuxController {
                 if (!match) continue
 
                 const paneId = parseInt(match[1])
+                const paneTitle = match[2] ? unescapeTmuxValue(match[2]) : ''
                 if (paneIds.has(paneId)) {
-                    this.paneTitles.set(paneId, match[2] ? unescapeTmuxValue(match[2]) : '')
+                    this.updatePaneTitle(paneId, windowId, paneTitle)
                 }
             }
         } catch (e) {
@@ -1113,8 +1126,7 @@ export class TmuxController {
             `select-pane -t %${paneId} -T ${quoteTmuxArgument(normalized)}`,
             TMUX_COMMAND_TOLERATE_ERRORS,
         )
-        this.paneTitles.set(paneId, normalized)
-        this.events.next({ type: 'pane-renamed', paneId, data: { name: normalized } })
+        this.updatePaneTitle(paneId, undefined, normalized, true)
     }
 
     resizePane(_paneId: number, columns: number, rows: number): void {

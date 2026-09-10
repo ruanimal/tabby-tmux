@@ -14,6 +14,7 @@ describe('TmuxConfigProvider', () => {
         const provider = new TmuxConfigProvider()
         expect(provider.defaults.tmuxPlugin).toEqual({
             defaultSessionName: 'default',
+            sessionTitleFormat: '#{window_name} - #{host}',
             commandTimeoutMs: 30_000,
             sendKeysChunkSize: 200,
             resizeDebounceMs: 150,

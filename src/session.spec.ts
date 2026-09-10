@@ -529,7 +529,14 @@ describe('TmuxController', () => {
                 paneIds: Array<{ paneId: number; windowId: number }>,
             ) => Promise<boolean>
             discoverWindowsAndPanes: () => Promise<void>
+            discoverPaneTitles: (windowId: number, paneIds: Set<number>) => Promise<void>
         }
+        const paneRenameEvents: Array<{ paneId?: number; windowId?: number; data?: unknown }> = []
+        controller.events.subscribe((event) => {
+            if (event.type === 'pane-renamed') {
+                paneRenameEvents.push(event)
+            }
+        })
         const capturePaneSnapshots = vi
             .spyOn(controllerInternals, 'capturePaneSnapshots')
             .mockResolvedValue(true)
@@ -546,6 +553,23 @@ describe('TmuxController', () => {
         await new Promise((resolve) => setTimeout(resolve, 10))
         expect(controller.getPaneTitle(7)).toBe('editor pane')
         expect(capturePaneSnapshots).toHaveBeenCalledWith([{ paneId: 7, windowId: 0 }])
+
+        const refreshTitle = controllerInternals.discoverPaneTitles(0, new Set([7]))
+        await waitForWrite(
+            written,
+            (writes) =>
+                writes.filter((write) => write.startsWith('list-panes -t @0 -F')).length === 2,
+        )
+        controller.gateway.executeData(Buffer.from('%begin 1 3 1\n%7 renamed\n%end 3\n'))
+        await refreshTitle
+
+        expect(controller.getPaneTitle(7)).toBe('renamed')
+        expect(paneRenameEvents).toContainEqual({
+            type: 'pane-renamed',
+            paneId: 7,
+            windowId: 0,
+            data: { name: 'renamed' },
+        })
     })
 
     it('reports the pane count of the owning window for the zoom toggle', async () => {

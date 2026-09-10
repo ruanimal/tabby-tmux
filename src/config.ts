@@ -5,6 +5,7 @@ export class TmuxConfigProvider extends ConfigProvider {
     defaults = {
         tmuxPlugin: {
             defaultSessionName: 'default',
+            sessionTitleFormat: '#{window_name} - #{host}',
             commandTimeoutMs: 30_000,
             sendKeysChunkSize: 200,
             resizeDebounceMs: 150,

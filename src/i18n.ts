@@ -3,6 +3,12 @@ export type TmuxLocale = 'en' | 'zh'
 const englishTranslations = {
     'settings.title': 'Tmux',
     'settings.defaultSessionName': 'Default session name:',
+    'settings.sessionTitleFormat': 'Session tab title format:',
+    'settings.sessionTitleFormatHelp': 'Title format variables',
+    'settings.sessionTitleFormatVariables':
+        '#{session_name}, #{window_name}, #{window_id}, #{window_index}, #{pane_name}, #{pane_id}, #{host}',
+    'settings.copySessionTitleFormat': 'Copy variables',
+    'settings.sessionTitleFormatCopied': 'Copied',
     'settings.commandTimeout': 'Command timeout (ms):',
     'settings.sendKeysChunkSize': 'Send-keys chunk size:',
     'settings.resizeDebounce': 'Resize debounce (ms):',
@@ -55,6 +61,12 @@ const englishTranslations = {
 const chineseTranslations: { [K in keyof typeof englishTranslations]: string } = {
     'settings.title': 'Tmux',
     'settings.defaultSessionName': '默认 session 名称：',
+    'settings.sessionTitleFormat': 'Session tab 标题格式：',
+    'settings.sessionTitleFormatHelp': '标题格式变量',
+    'settings.sessionTitleFormatVariables':
+        '#{session_name}、#{window_name}、#{window_id}、#{window_index}、#{pane_name}、#{pane_id}、#{host}',
+    'settings.copySessionTitleFormat': '复制变量',
+    'settings.sessionTitleFormatCopied': '已复制',
     'settings.commandTimeout': '命令超时（毫秒）：',
     'settings.sendKeysChunkSize': 'Send-keys 分块大小：',
     'settings.resizeDebounce': '调整大小防抖（毫秒）：',
