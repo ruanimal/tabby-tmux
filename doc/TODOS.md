@@ -21,3 +21,7 @@
 - [x] ~~attach 时 window 顺序不稳定~~：windowStates 顺序不再依赖 Map 插入序，改为按 list-windows 的 `#{window_index}` 显式排序（`move-window`/`swap-window` 重排 index 不改变 window ID，运行时 `%window-add` 的到达顺序也与 index 无关）；`list-windows` 窗口名改用 `#{q:window_name}` 转义，避免名字含「空格+数字」（如 `foo 1`）时解析错位导致 index/active 字段错乱。同时修复 `TmuxPaneTabComponent._tmuxActive` 初始值 `true` 的 bug：所有 pane tab 的 hotkey$ 都会触发（hasFocus 全为 true），未挂载 pane（其他 window 的 pane、bootstrap 批量创建未显示的 pane）从未被 `focus()` 遍历到，保持 `true` 会把 Ctrl+C/粘贴误发到错误 window 的 tmux pane；初始值改为 `false`，挂载后由 `restoreActivePaneFocus`/`focus()` 设置。
 - [x] ~~re-attach 后 pane 历史显示 trzsz 协议数据 / 布局尺寸不稳定~~：attach 时序重构后已解决 —— 首次 client size 由宿主 cell 提前推送、capture 由 `clientSizePushed` 守卫保护（Step B 补捕）、历史恢复做折叠/裁剪/pop/gridApplied 归一化、新建 pane 的 `%output` 缓冲到 grid 应用后。
 - [x] ~~tmux 会话恢复的布局/内容错位（尺寸问题导致 vim hello 页丢失）~~：历史恢复列宽（gridApplied）、尺寸推送（hostCell 提前 + padding 剔除）、光标恢复（pane 实际高度 + lastNonEmpty）均已修复；vim 等 alternate screen 内容经 `pendingAltRestore` 在 resize 后重放。若仍有残余请复测并贴日志。
+
+## 更新记录（2026-09）
+
+- [x] window bar 在 window 很多时换行/挤压：根因不是 `flex-wrap`，而是「strip 横向滚动条吃掉 bar 第二行」+「`+` 按钮位于滚动区内被滚出视口」+「tab 被 `flex-shrink` 压到 min-width、长名字溢出」。修复：bar/strip 显式单行（`flex-wrap: nowrap`）、tab `flex: 0 0 auto`、隐藏原生滚动条保持 bar 高度恒定；`+` 移出滚动区但仍紧跟 strip（strip 改 `flex: 0 1 auto`，少窗口时 `+` 位置与原来完全一致），退出按钮 `margin-left: auto` 钉在右端，两者始终可见；并补上滚轮横向滚动、active tab 自动滚入视口、两端渐隐提示。详见 `doc/FIX_WINDOW_BAR_SCROLL.md`。

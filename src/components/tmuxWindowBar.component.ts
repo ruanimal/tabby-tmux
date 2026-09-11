@@ -1,17 +1,28 @@
 import {
+    AfterViewInit,
     Component,
+    ElementRef,
     Input,
     Output,
     EventEmitter,
+    OnChanges,
     OnInit,
     OnDestroy,
     ChangeDetectorRef,
+    SimpleChanges,
+    ViewChild,
 } from '@angular/core'
 import { Subscription } from 'rxjs'
 import { ConfigService, MenuItemOptions, PlatformService } from 'tabby-core'
 import { TmuxController } from '../session'
 import { TmuxI18nService } from '../services/tmuxI18n.service'
 import { formatTmuxWindowTooltip, TmuxPaneTooltipData } from './tmuxWindowTooltip'
+import {
+    clampScrollLeft,
+    computeScrollHints,
+    resolveWheelScrollDelta,
+    scrollLeftToReveal,
+} from '../windowBarScroll'
 
 interface WindowInfo {
     id: number
@@ -25,11 +36,12 @@ interface WindowInfo {
     selector: 'tmux-window-bar',
     template: `
         <div class="window-bar">
-            <div class="window-tabs">
+            <div class="window-tabs" #tabsEl (wheel)="onTabsWheel($event)">
                 <button
                     *ngFor="let win of windows"
                     class="window-tab"
                     [class.active]="win.id === activeWindowId"
+                    [attr.data-window-id]="win.id"
                     (click)="windowSwitch.emit(win.id)"
                     (contextmenu)="onContextMenu($event, win)"
                     [title]="win.tooltip"
@@ -45,16 +57,25 @@ interface WindowInfo {
                         <i class="fas fa-times"></i>
                     </span>
                 </button>
-                <button
-                    class="window-tab add-btn"
-                    [title]="newWindowTitle"
-                    (click)="createWindow.emit()"
-                >
-                    <i class="fas fa-plus"></i>
-                </button>
             </div>
+            <!-- Sits directly after the strip, so it keeps its original place
+                 right next to the last window tab; the strip shrinks (instead
+                 of pushing it away) once the window list overflows. -->
+            <button
+                class="bar-btn add-btn"
+                [title]="newWindowTitle"
+                [attr.aria-label]="newWindowTitle"
+                (click)="createWindow.emit()"
+            >
+                <i class="fas fa-plus"></i>
+            </button>
             <div class="bar-actions">
-                <button class="bar-btn" [title]="disconnectTitle" (click)="disconnect.emit()">
+                <button
+                    class="bar-btn"
+                    [title]="disconnectTitle"
+                    [attr.aria-label]="disconnectTitle"
+                    (click)="disconnect.emit()"
+                >
                     <i class="fas fa-eject"></i>
                 </button>
             </div>
@@ -66,29 +87,79 @@ interface WindowInfo {
                 display: block;
                 flex: 0 0 auto;
             }
+            /* The bar is always one single row. The window list scrolls
+           horizontally on its own; the new-window button sits right after it
+           (its original place, next to the last tab) and the exit button is
+           pinned to the right edge, so a session with many windows can
+           neither wrap the bar onto a second line nor push either button out
+           of view. */
             .window-bar {
                 display: flex;
+                flex-wrap: nowrap;
                 align-items: center;
-                justify-content: space-between;
+                /* the tab strip keeps its own 2px rhythm with the + button */
+                gap: 2px;
                 padding: 2px 8px;
                 background: var(--theme-bg-more-2, rgba(30, 30, 30, 0.95));
                 border-top: 1px solid var(--theme-bg-less-2, rgba(255, 255, 255, 0.1));
                 min-height: 28px;
-                overflow-x: auto;
+                /* children scroll internally; nothing may spill out of the bar */
+                overflow: hidden;
             }
             .window-tabs {
                 display: flex;
+                flex-wrap: nowrap;
                 align-items: center;
                 gap: 2px;
-                overflow-x: auto;
-                flex: 1;
+                /* Size to the tabs, but shrink (and scroll) instead of pushing
+               the + button off-screen when the window list gets long. */
+                flex: 0 1 auto;
                 min-width: 0;
+                position: relative;
+                overflow-x: auto;
+                overflow-y: hidden;
+                /* A native scrollbar would eat into the 28px bar height and
+               shift the pane area; wheel scrolling plus the edge fades
+               below replace it. */
+                scrollbar-width: none;
+            }
+            .window-tabs::-webkit-scrollbar {
+                display: none;
+            }
+            /* Fades mark that more windows are scrolled out of sight; the
+           classes are toggled from the component (updateScrollHints). */
+            .window-tabs.can-scroll-left {
+                -webkit-mask-image: linear-gradient(to right, transparent 0, #000 18px);
+                mask-image: linear-gradient(to right, transparent 0, #000 18px);
+            }
+            .window-tabs.can-scroll-right {
+                -webkit-mask-image: linear-gradient(to left, transparent 0, #000 18px);
+                mask-image: linear-gradient(to left, transparent 0, #000 18px);
+            }
+            .window-tabs.can-scroll-left.can-scroll-right {
+                -webkit-mask-image: linear-gradient(
+                    to right,
+                    transparent 0,
+                    #000 18px,
+                    #000 calc(100% - 18px),
+                    transparent 100%
+                );
+                mask-image: linear-gradient(
+                    to right,
+                    transparent 0,
+                    #000 18px,
+                    #000 calc(100% - 18px),
+                    transparent 100%
+                );
             }
             .window-tab {
                 display: flex;
                 align-items: center;
                 gap: 4px;
                 height: 22px;
+                /* Never shrink or wrap: the strip scrolls instead, so a tab
+               always keeps its name and its close button apart. */
+                flex: 0 0 auto;
                 /* 窗口名过短（如 "1"、"2"）时 tab 会缩得很窄，
                导致关闭按钮紧贴名称，悬停时极易误触关闭。
                设置最小宽度保证名称与关闭按钮之间有足够间距。 */
@@ -149,20 +220,16 @@ interface WindowInfo {
                 background: color-mix(in srgb, var(--theme-danger, #f66) 30%, transparent);
                 color: var(--theme-danger, #f66);
             }
-            .add-btn {
-                color: var(--theme-fg-more-2, #666);
-                padding: 0 6px;
-                /* "+" 按钮不需要最小宽度，覆盖 .window-tab 的 min-width */
-                min-width: 0;
-            }
-            .add-btn:hover {
-                color: var(--theme-fg-more, #aaa);
-            }
+            /* Exit control — pinned to the right edge, never part of the
+           scroll strip, so it stays reachable no matter how many windows
+           the session has. */
             .bar-actions {
                 display: flex;
+                flex-wrap: nowrap;
                 align-items: center;
-                gap: 2px;
-                margin-left: 8px;
+                gap: 4px;
+                flex: 0 0 auto;
+                margin-left: auto;
             }
             .bar-btn {
                 display: flex;
@@ -181,10 +248,18 @@ interface WindowInfo {
                 background: var(--theme-bg-less-2, rgba(255, 255, 255, 0.1));
                 color: var(--theme-fg-more, #ccc);
             }
+            .add-btn {
+                /* directly after the scroll strip — never shrinks away with it */
+                flex: 0 0 auto;
+                color: var(--theme-fg-more-2, #666);
+            }
+            .add-btn:hover {
+                color: var(--theme-fg-more, #aaa);
+            }
         `,
     ],
 })
-export class TmuxWindowBarComponent implements OnInit, OnDestroy {
+export class TmuxWindowBarComponent implements OnInit, OnChanges, AfterViewInit, OnDestroy {
     @Input() controller: TmuxController
     @Input() activeWindowId: number | null = null
 
@@ -193,6 +268,9 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
     @Output() renameRequested = new EventEmitter<{ id: number; name: string }>()
     @Output() disconnect = new EventEmitter<void>()
     @Output() createWindow = new EventEmitter<void>()
+
+    /** Horizontally scrolling strip that holds the window tabs. */
+    @ViewChild('tabsEl') tabsEl?: ElementRef<HTMLElement>
 
     windows: WindowInfo[] = []
 
@@ -203,6 +281,11 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
 
     private subscription: Subscription
     private languageSubscription: Subscription
+    /** Signature of the rendered tab list, used to detect add/remove/rename. */
+    private renderedSignature = ''
+    private revealScheduled = false
+    private stripScrollListener: (() => void) | null = null
+    private stripResizeObserver: ResizeObserver | null = null
 
     constructor(
         private cdr: ChangeDetectorRef,
@@ -249,15 +332,121 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
         })
     }
 
+    ngOnChanges(changes: SimpleChanges): void {
+        if (changes['activeWindowId']) {
+            // The strip can only be measured once the new active tab is in the DOM.
+            this.scheduleReveal()
+        }
+    }
+
+    ngAfterViewInit(): void {
+        const strip = this.tabsEl?.nativeElement
+        if (!strip) {
+            return
+        }
+        this.stripScrollListener = () => this.updateScrollHints()
+        strip.addEventListener('scroll', this.stripScrollListener, { passive: true })
+        if (typeof ResizeObserver !== 'undefined') {
+            this.stripResizeObserver = new ResizeObserver(() => this.updateScrollHints())
+            this.stripResizeObserver.observe(strip)
+        }
+        this.scheduleReveal()
+    }
+
     ngOnDestroy(): void {
         this.subscription?.unsubscribe()
         this.languageSubscription?.unsubscribe()
+        const strip = this.tabsEl?.nativeElement
+        if (strip && this.stripScrollListener) {
+            strip.removeEventListener('scroll', this.stripScrollListener)
+        }
+        this.stripResizeObserver?.disconnect()
+        this.stripResizeObserver = null
+    }
+
+    /**
+     * Translate a vertical wheel over the tab strip into horizontal scrolling.
+     *
+     * At either end the event is left alone so the wheel keeps working for the
+     * terminal / surrounding view instead of being swallowed.
+     */
+    onTabsWheel(event: WheelEvent): void {
+        const strip = this.tabsEl?.nativeElement
+        if (!strip) {
+            return
+        }
+        const delta = resolveWheelScrollDelta(event, strip.clientWidth)
+        if (delta === 0) {
+            return
+        }
+        const next = clampScrollLeft(strip.scrollLeft + delta, strip.scrollWidth, strip.clientWidth)
+        if (next === strip.scrollLeft) {
+            return
+        }
+        event.preventDefault()
+        strip.scrollLeft = next
+        this.updateScrollHints()
+    }
+
+    /** Scroll the active window tab into view (no-op when it already is). */
+    revealActiveWindow(): void {
+        const strip = this.tabsEl?.nativeElement
+        if (!strip) {
+            return
+        }
+        const id = this.activeWindowId
+        const tab =
+            id === null ? null : strip.querySelector<HTMLElement>(`[data-window-id="${id}"]`)
+        if (tab) {
+            const target = scrollLeftToReveal(
+                { start: tab.offsetLeft, end: tab.offsetLeft + tab.offsetWidth },
+                { start: strip.scrollLeft, end: strip.scrollLeft + strip.clientWidth },
+                strip.scrollWidth,
+                strip.clientWidth,
+            )
+            if (target !== strip.scrollLeft) {
+                strip.scrollLeft = target
+            }
+        }
+        this.updateScrollHints()
+    }
+
+    /** Toggle the edge fades that advertise hidden windows. */
+    updateScrollHints(): void {
+        const strip = this.tabsEl?.nativeElement
+        if (!strip) {
+            return
+        }
+        const hints = computeScrollHints(strip.scrollLeft, strip.scrollWidth, strip.clientWidth)
+        strip.classList.toggle('can-scroll-left', hints.moreLeft)
+        strip.classList.toggle('can-scroll-right', hints.moreRight)
+    }
+
+    /**
+     * Reveal the active tab on the next frame — the tab strip has to be laid
+     * out with the new window list / active window before it can be measured.
+     */
+    private scheduleReveal(): void {
+        if (this.revealScheduled) {
+            return
+        }
+        this.revealScheduled = true
+        const run = () => {
+            this.revealScheduled = false
+            this.revealActiveWindow()
+        }
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(run)
+        } else {
+            setTimeout(run, 0)
+        }
     }
 
     private refreshWindows(): void {
         const controller = this.controller
         if (!controller) {
             this.windows = []
+            this.renderedSignature = ''
             this.cdr.detectChanges()
             return
         }
@@ -283,6 +472,15 @@ export class TmuxWindowBarComponent implements OnInit, OnDestroy {
             }
         })
         this.cdr.detectChanges()
+
+        // Only follow the layout when the tab list itself changed (window
+        // added/removed/renamed): unrelated refreshes must not yank back a
+        // strip the user scrolled manually.
+        const signature = this.windows.map((win) => `${win.id}:${win.name}`).join('\n')
+        if (signature !== this.renderedSignature) {
+            this.renderedSignature = signature
+            this.scheduleReveal()
+        }
     }
 
     private updateLabels(): void {
