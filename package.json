@@ -1,6 +1,6 @@
 {
     "name": "tabby-tmux",
-    "version": "1.4.4",
+    "version": "1.4.5",
     "description": "Tmux Control Mode support for Tabby",
     "keywords": [
         "tabby-plugin"
