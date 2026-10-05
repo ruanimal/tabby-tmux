@@ -11,8 +11,10 @@ vi.mock('tabby-terminal', async () => {
     class MockBaseSession {
         open = false
         output$ = new Subject<Buffer>()
-        constructor(_logger: unknown) {
+        protected logger: unknown
+        constructor(logger: unknown) {
             this.open = true
+            this.logger = logger
         }
         protected emitOutput(data: Buffer): void {
             this.output$.next(data)
@@ -33,6 +35,11 @@ function createLoggerMock() {
     } as unknown as Logger
 }
 
+/** `list-panes -F` state response for pane %1 (see captureSnapshotForPane). */
+const STATE_LINE =
+    'pane_id=%1\talternate_on=0\tcursor_x=8\tcursor_y=1\tscroll_region_upper=0\t' +
+    'scroll_region_lower=0\tcursor_flag=1\twrap_flag=1\tpane_height=24'
+
 describe('TmuxPaneSession', () => {
     function createSession() {
         const logger = createLoggerMock()
@@ -41,6 +48,11 @@ describe('TmuxPaneSession', () => {
             unregisterPane: vi.fn(),
             restorePaneHistory: vi.fn().mockResolvedValue(undefined),
             writeToPane: vi.fn(),
+            // A pre-loaded snapshot is available, so start() does not need to
+            // capture a fresh one (that path is exercised in the controller
+            // tests below / TmuxController pane snapshot lifecycle).
+            hasPendingSnapshot: vi.fn().mockReturnValue(true),
+            ensurePaneSnapshot: vi.fn().mockResolvedValue(true),
         } as unknown as TmuxController
         const session = new TmuxPaneSession(logger, controller, 5)
         return { session, controller, logger }
@@ -86,6 +98,23 @@ describe('TmuxPaneSession', () => {
         const { emitted } = await startSession(session)
         session.feedOutput(Buffer.from('c'))
         expect(emitted.map((b) => b.toString())).toEqual(['c'])
+    })
+
+    it('still flushes pre-grid output when history restore fails', async () => {
+        const { session, controller } = createSession()
+        vi.mocked(controller.restorePaneHistory).mockRejectedValueOnce(new Error('boom'))
+
+        const emitted: Array<Buffer | string> = []
+        session.output$.subscribe((d) => emitted.push(d))
+        session.feedOutput(Buffer.from('early-live-output'))
+
+        const startPromise = session.start()
+        session.gridApplied()
+        // A failed restore must not reject (unhandled rejection used to leave
+        // the pane blank with no diagnostic) ...
+        await expect(startPromise).resolves.toBeUndefined()
+        // ... and the buffered live output is still delivered.
+        expect(emitted.map((b) => b.toString())).toEqual(['early-live-output'])
     })
 
     it('strips screen title sequences (ESC k ... ESC \\) from output', async () => {
@@ -636,6 +665,116 @@ describe('TmuxController', () => {
         // Let the async layout discovery settle (capture commands time out
         // after commandTimeoutMs=30 and are swallowed by their try/catch).
         await new Promise((resolve) => setTimeout(resolve, 80))
+    })
+
+    /**
+     * Answer the attach-phase batch discovery for a single pane (@0 / %1),
+     * mirroring what tmux emits for `tmux -CC attach`.
+     */
+    async function answerAttachDiscovery(
+        controller: TmuxController,
+        written: string[],
+        history: string,
+    ): Promise<void> {
+        await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-windows')))
+        controller.gateway.executeData(
+            Buffer.from('%begin 1 1 1\n@0 main 0 1 aa,80x24,0,0,1 * aa,80x24,0,0,1\n%end 1\n'),
+        )
+        await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-panes')))
+        controller.gateway.executeData(Buffer.from('%begin 1 2 1\n%1 @0 1\n%end 2\n'))
+        await waitForWrite(written, (w) => w.some((x) => x.startsWith('capture-pane -peqJN -S-')))
+        answerSnapshot(controller, history)
+
+        // Discovery ends with the hostname query. Answer it so the response
+        // queue stays aligned for the commands issued afterwards (a stale slot
+        // would shift every later response by one).
+        await waitForWrite(written, (w) =>
+            w.some((x) => x.startsWith('display-message -p "#{host}"')),
+        )
+        controller.gateway.executeData(Buffer.from('%begin 1 6 1\nprobe.local\n%end 6\n'))
+    }
+
+    /** Answer the three capture commands of one snapshot, in queue order. */
+    function answerSnapshot(
+        controller: TmuxController,
+        history: string,
+        {
+            altHistory = '',
+            stateLine = STATE_LINE,
+        }: { altHistory?: string; stateLine?: string } = {},
+    ): void {
+        controller.gateway.executeData(Buffer.from(`%begin 1 3 1\n${history}\n%end 3\n`))
+        controller.gateway.executeData(Buffer.from(`%begin 1 4 1\n${altHistory}\n%end 4\n`))
+        controller.gateway.executeData(Buffer.from(`%begin 1 5 1\n${stateLine}\n%end 5\n`))
+    }
+
+    it('delivers output produced after the snapshot capture (issue #10)', async () => {
+        const { controller, written } = createController()
+        controller.setClientSizePushed()
+
+        // Attach redraw, received before any pane tab (session) exists.
+        controller.gateway.executeData(Buffer.from('%output %1 attach-screen\r\n'))
+
+        const discover = controller.refreshPanes()
+        await answerAttachDiscovery(controller, written, 'prompt$ ls')
+        await discover
+
+        // The pane keeps producing output while its window is NOT displayed:
+        // the pane is only mounted when the user switches to that window.
+        controller.gateway.executeData(Buffer.from('%output %1 POST-CAPTURE\r\n'))
+
+        const session = new TmuxPaneSession(createLoggerMock(), controller, 1)
+        const emitted: string[] = []
+        session.output$.subscribe((d) => emitted.push(d.toString()))
+        const startPromise = session.start()
+        session.gridApplied()
+        await startPromise
+
+        const rendered = emitted.join('')
+        // Snapshot content is restored ...
+        expect(rendered).toContain('prompt$ ls')
+        // ... and the output produced after the capture is NOT lost.
+        expect(rendered).toContain('POST-CAPTURE')
+        // ... while the chunks the snapshot already covers are not replayed.
+        expect(rendered).not.toContain('attach-screen')
+    })
+
+    it('captures a fresh snapshot when the pre-loaded one is gone (issue #10)', async () => {
+        const { controller, written } = createController()
+        controller.setClientSizePushed()
+
+        const discover = controller.refreshPanes()
+        await answerAttachDiscovery(controller, written, 'stale-screen')
+        await discover
+
+        // First mount consumes the pre-loaded snapshot.
+        const first = new TmuxPaneSession(createLoggerMock(), controller, 1)
+        const firstStart = first.start()
+        first.gridApplied()
+        await firstStart
+        await first.destroy()
+        expect(controller.hasPendingSnapshot(1)).toBe(false)
+
+        // Output produced between teardown and re-mount is buffered again.
+        controller.gateway.executeData(Buffer.from('%output %1 LIVE-DURING-GAP\r\n'))
+
+        // Re-mount: without a capture the pane would stay blank.
+        const second = new TmuxPaneSession(createLoggerMock(), controller, 1)
+        const emitted: string[] = []
+        second.output$.subscribe((d) => emitted.push(d.toString()))
+        const secondStart = second.start()
+        second.gridApplied()
+        await waitForWrite(
+            written,
+            (w) => w.filter((x) => x.startsWith('capture-pane -peqJN -S-')).length === 2,
+        )
+        answerSnapshot(controller, 'fresh-screen')
+        await secondStart
+
+        const rendered = emitted.join('')
+        expect(rendered).toContain('fresh-screen')
+        // The gap output is contained in the fresh snapshot: not replayed twice.
+        expect(rendered).not.toContain('LIVE-DURING-GAP')
     })
 })
 

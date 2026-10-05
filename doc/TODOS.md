@@ -25,3 +25,7 @@
 ## 更新记录（2026-09）
 
 - [x] window bar 在 window 很多时换行/挤压：根因不是 `flex-wrap`，而是「strip 横向滚动条吃掉 bar 第二行」+「`+` 按钮位于滚动区内被滚出视口」+「tab 被 `flex-shrink` 压到 min-width、长名字溢出」。修复：bar/strip 显式单行（`flex-wrap: nowrap`）、tab `flex: 0 0 auto`、隐藏原生滚动条保持 bar 高度恒定；`+` 移出滚动区但仍紧跟 strip（strip 改 `flex: 0 1 auto`，少窗口时 `+` 位置与原来完全一致），退出按钮 `margin-left: auto` 钉在右端，两者始终可见；并补上滚轮横向滚动、active tab 自动滚入视口、两端渐隐提示。详见 `doc/FIX_WINDOW_BAR_SCROLL.md`。
+
+## 更新记录（2026-10）
+
+- [x] ~~载入后部分 pane 空白 / 不更新（issue #10）~~：根因是**快照覆盖范围被当成整个缓冲**。attach 时只有当前 window 的 pane 被挂载，其余 window 的 pane 输出堆在 `pendingPaneOutput`；batch discovery 对所有 pane 生成快照后，`registerPane()` 只要快照非空就把**整段缓冲**删掉 —— 而快照只覆盖 capture-pane 那一刻，capture 之后到用户切窗之间的全部新输出（可能几分钟/几千行）被一起丢弃，于是 pane 停留在 attach 时的画面（TUI 场景可能直接空白），「即使有变化也不更新」，切过去 + 输入后才恢复正常。修复：`PaneSnapshot.bufferedBaseline` 在 capture 命令发出前记录已缓冲 chunk 数，`registerPane()` 只丢弃被快照覆盖的前缀，其余在 `restorePaneHistory()` 之后 replay（方向保守：宁可重复一次也不丢）；快照缺失时（被前一次挂载消费 / 随会话销毁删除 / 捕获失败）由 `TmuxPaneSession.start()` 通过 `ensurePaneSnapshot()` 在 grid 应用前重新捕获，避免「空白且没有回滚历史」；`start()` 改为 try/catch/finally + 调用处 catch，restore 抛错也必须 flush 缓冲、不再产生 unhandled rejection（此前会留下一个空白 pane）。回归测试 3 个（载入后切窗不丢输出、快照缺失时重新捕获、restore 失败仍 flush）。详见 `doc/FIX_PANE_SNAPSHOT_LOSS.md`。

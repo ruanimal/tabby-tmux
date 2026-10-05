@@ -19,6 +19,18 @@ interface PaneSnapshot {
     history: string
     altHistory: string
     state: PaneState
+    /**
+     * Number of leading `pendingPaneOutput` chunks for this pane that tmux had
+     * already emitted when the capture commands were issued — i.e. the chunks
+     * this snapshot is guaranteed to contain.
+     *
+     * Only that prefix may be discarded when the pane is registered. The rest
+     * of the buffer holds output produced AFTER the capture, which the snapshot
+     * does not contain: dropping it makes a pane that is mounted long after
+     * discovery (every window except the one displayed at attach) show its
+     * attach-time screen and silently lose everything produced in between.
+     */
+    bufferedBaseline: number
 }
 
 /**
@@ -81,30 +93,64 @@ export class TmuxPaneSession extends BaseSession {
      */
     private _pendingOutput: Buffer[] = []
     private _gridDone = false
+    /**
+     * Number of leading `_pendingOutput` entries the snapshot being restored
+     * already contains (see PaneSnapshot.bufferedBaseline). Only the entries
+     * after this index are replayed once the history is written.
+     */
+    private _snapshotCovers = 0
 
     async start(): Promise<void> {
         this.open = true
-        // Wait for the pane's xterm to apply the tmux layout grid before
-        // restoring history, so history lines are written at the correct
-        // column width (see _gridApplied docs). 3s timeout as a fallback for
-        // panes that never get a grid (e.g. not present in any layout) —
-        // degraded (possibly mis-wrapped) history is better than none.
-        await Promise.race([
-            this._gridApplied,
-            new Promise<void>((resolve) => setTimeout(resolve, 3000)),
-        ])
-        // The xterm is now at the tmux layout columns. Mark the grid done so
-        // restorePaneHistory's feedOutput goes straight to the terminal;
-        // early %output stays buffered and is flushed AFTER the captured
-        // history — the streamed prompt must come after captured content
-        // (flushing first lets a non-empty snapshot overwrite the prompt,
-        // losing it or leaving its cursor CUP on the wrong line → line start).
-        this._gridDone = true
-        await this.controller.restorePaneHistory(this.paneId)
-        for (const data of this._pendingOutput) {
-            this.emitOutput(data)
+        try {
+            // Wait for the pane's xterm to apply the tmux layout grid before
+            // restoring history, so history lines are written at the correct
+            // column width (see _gridApplied docs). 3s timeout as a fallback for
+            // panes that never get a grid (e.g. not present in any layout) —
+            // degraded (possibly mis-wrapped) history is better than none.
+            await Promise.race([
+                this._gridApplied,
+                new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+            ])
+
+            // The pre-loaded snapshot may be gone: already consumed by an
+            // earlier mount of this pane, dropped together with a destroyed
+            // session, or never captured (capture failure). Restoring nothing
+            // leaves the pane blank until its next output, so capture one now.
+            // Everything queued in _pendingOutput when the capture is issued is
+            // on tmux's screen at capture time and therefore contained in the
+            // fresh snapshot — but only when the capture actually succeeds, so
+            // the prefix is recorded after it returns.
+            if (!this.controller.hasPendingSnapshot(this.paneId)) {
+                const queuedBeforeCapture = this._pendingOutput.length
+                const captured = await this.controller.ensurePaneSnapshot(this.paneId)
+                if (captured) {
+                    this._snapshotCovers = queuedBeforeCapture
+                }
+            }
+
+            // The xterm is now at the tmux layout columns. Mark the grid done so
+            // restorePaneHistory's feedOutput goes straight to the terminal;
+            // early %output stays buffered and is flushed AFTER the captured
+            // history — the streamed prompt must come after captured content
+            // (flushing first lets a non-empty snapshot overwrite the prompt,
+            // losing it or leaving its cursor CUP on the wrong line → line start).
+            this._gridDone = true
+            await this.controller.restorePaneHistory(this.paneId)
+        } catch (e) {
+            // A failed restore must not lose the buffered live output: the
+            // finally block below still flushes it, so the pane renders its
+            // live stream (degraded) instead of staying blank until the next
+            // output arrives.
+            this.logger.warn(`Pane %${this.paneId}: failed to restore tmux history`, e)
+        } finally {
+            this._gridDone = true
+            for (const data of this._pendingOutput.slice(this._snapshotCovers)) {
+                this.emitOutput(data)
+            }
+            this._pendingOutput = []
+            this._snapshotCovers = 0
         }
-        this._pendingOutput = []
     }
 
     resize(_columns: number, _rows: number): void {
@@ -1017,6 +1063,30 @@ export class TmuxController {
             )
             return false
         }
+
+        await Promise.all(
+            paneIds.map(async ({ paneId }) => {
+                const snapshot = await this.captureSnapshotForPane(paneId)
+                if (snapshot) {
+                    this.pendingSnapshots.set(paneId, snapshot)
+                }
+            }),
+        )
+        return true
+    }
+
+    /**
+     * Capture one pane's history + alternate screen + terminal state.
+     *
+     * `bufferedBaseline` is read BEFORE the commands are written: the chunks
+     * already buffered for this pane were emitted by tmux before it executes
+     * the capture, so the snapshot is guaranteed to contain them (and only
+     * them — output written afterwards must still be delivered, see
+     * PaneSnapshot.bufferedBaseline).
+     */
+    private async captureSnapshotForPane(paneId: number): Promise<PaneSnapshot | null> {
+        const bufferedBaseline = this.pendingPaneOutput.get(paneId)?.length ?? 0
+
         const stateFormat = [
             'pane_id=#{pane_id}',
             'alternate_on=#{alternate_on}',
@@ -1039,29 +1109,68 @@ export class TmuxController {
             'pane_height=#{pane_height}',
         ].join('\t')
 
-        const captures = paneIds.map(async ({ paneId }) => {
-            try {
-                const [history, altHistory, stateResult] = await Promise.all([
-                    this.gateway.sendCommand(
-                        `capture-pane -peqJN -S- -t %${paneId}`,
-                        TMUX_COMMAND_TOLERATE_ERRORS,
-                    ),
-                    this.gateway.sendCommand(
-                        `capture-pane -peqJN -a -S- -t %${paneId}`,
-                        TMUX_COMMAND_TOLERATE_ERRORS,
-                    ),
-                    this.gateway.sendCommand(
-                        `list-panes -t %${paneId} -F "${stateFormat}"`,
-                        TMUX_COMMAND_TOLERATE_ERRORS,
-                    ),
-                ])
-                const state = parsePaneState(stateResult, paneId)
-                this.pendingSnapshots.set(paneId, { history, altHistory, state })
-            } catch (e) {
-                this.logger.warn(`Failed to capture snapshot for pane %${paneId}:`, e)
+        try {
+            const [history, altHistory, stateResult] = await Promise.all([
+                this.gateway.sendCommand(
+                    `capture-pane -peqJN -S- -t %${paneId}`,
+                    TMUX_COMMAND_TOLERATE_ERRORS,
+                ),
+                this.gateway.sendCommand(
+                    `capture-pane -peqJN -a -S- -t %${paneId}`,
+                    TMUX_COMMAND_TOLERATE_ERRORS,
+                ),
+                this.gateway.sendCommand(
+                    `list-panes -t %${paneId} -F "${stateFormat}"`,
+                    TMUX_COMMAND_TOLERATE_ERRORS,
+                ),
+            ])
+            return {
+                history,
+                altHistory,
+                state: parsePaneState(stateResult, paneId),
+                bufferedBaseline,
             }
-        })
-        await Promise.all(captures)
+        } catch (e) {
+            this.logger.warn(`Failed to capture snapshot for pane %${paneId}:`, e)
+            return null
+        }
+    }
+
+    /**
+     * Whether a pre-loaded snapshot is waiting to be restored.
+     * False once restorePaneHistory consumed it, or when the capture failed.
+     */
+    hasPendingSnapshot(paneId: number): boolean {
+        return this.pendingSnapshots.has(paneId)
+    }
+
+    /**
+     * Capture a snapshot for a pane whose pre-loaded one is no longer
+     * available (already consumed by an earlier mount of the same pane tab,
+     * dropped with a destroyed session, or a failed capture).
+     *
+     * Without this, restorePaneHistory() has nothing to write and the pane
+     * stays blank until its next output. Called from TmuxPaneSession.start()
+     * BEFORE the tmux grid is marked applied, so live output received during
+     * the capture stays queued and is flushed after the history (see
+     * TmuxPaneSession.start).
+     *
+     * Returns whether a snapshot is now pending for the pane — false when the
+     * capture failed (the pane is probably gone), in which case the buffered
+     * output must NOT be treated as snapshot-covered.
+     */
+    async ensurePaneSnapshot(paneId: number): Promise<boolean> {
+        if (this.pendingSnapshots.has(paneId)) {
+            return true
+        }
+
+        const snapshot = await this.captureSnapshotForPane(paneId)
+        if (!snapshot) {
+            this.log.warn(`No snapshot available for pane %${paneId} at restore time`)
+            return false
+        }
+        this.pendingSnapshots.set(paneId, snapshot)
+        this.log.info(`Captured a fresh snapshot for pane %${paneId} at restore time`)
         return true
     }
 
@@ -1071,32 +1180,45 @@ export class TmuxController {
         this.paneSessions.set(paneId, session)
         this.knownPanes.add(paneId)
 
-        // If the snapshot already captured real content, the pending output
-        // is redundant — the snapshot contains the same content (and more),
-        // and restorePaneHistory will write it. Discard the buffer to avoid
-        // writing the prompt/scrollback twice.
-        // But if the snapshot is EMPTY (the pane was captured before its
-        // shell printed the prompt — e.g. a fresh window on a slow remote
-        // box, cursor_x=0), the buffered %output is the ONLY copy of the
-        // prompt. Keep and flush it; dropping it would leave the pane
-        // without a prompt ("sometimes no prompt at all").
-        const snapshot = this.pendingSnapshots.get(paneId)
-        if (snapshot && snapshot.history && snapshot.history.trim()) {
-            this.pendingPaneOutput.delete(paneId)
+        const buffered = this.pendingPaneOutput.get(paneId)
+        if (!buffered) {
             return
         }
+        this.pendingPaneOutput.delete(paneId)
 
-        // Snapshot absent or empty — flush buffered output to the session
-        // (it will render once the tmux grid is applied).
-        const buffered = this.pendingPaneOutput.get(paneId)
-        if (buffered) {
-            for (const data of buffered) {
-                session.feedOutput(data)
-            }
-            this.pendingPaneOutput.delete(paneId)
+        // A non-empty snapshot supersedes only the chunks tmux had ALREADY
+        // emitted when the capture commands were issued (bufferedBaseline) —
+        // exactly the content the snapshot contains. Everything after that
+        // index was produced after the capture and is NEWER than the snapshot:
+        // dropping it made panes mounted long after discovery (every window
+        // except the one displayed at attach, and panes hidden by zoom) show
+        // their attach-time screen while silently losing all output produced in
+        // between. The rest is handed to the session, which replays it after
+        // restorePaneHistory (see TmuxPaneSession.start).
+        //
+        // When the snapshot is empty (the pane was captured before its shell
+        // printed the prompt — e.g. a fresh window on a slow remote box,
+        // cursor_x=0) nothing is covered and the buffered %output is the ONLY
+        // copy of the prompt, so all of it is kept — dropping it would leave
+        // the pane without a prompt ("sometimes no prompt at all").
+        const snapshot = this.pendingSnapshots.get(paneId)
+        const covered =
+            snapshot && snapshot.history && snapshot.history.trim() ? snapshot.bufferedBaseline : 0
+
+        for (const data of buffered.slice(covered)) {
+            session.feedOutput(data)
         }
     }
 
+    /**
+     * Drop all controller-side state for a pane.
+     *
+     * The snapshot is deliberately dropped too: it describes the pane as of
+     * its capture, and reusing it for a later mount would render a stale screen
+     * (the whole point of PaneSnapshot.bufferedBaseline). TmuxPaneSession.start()
+     * captures a fresh snapshot through ensurePaneSnapshot() when the pane is
+     * mounted again, so the re-mounted pane shows its CURRENT content.
+     */
     unregisterPane(paneId: number): void {
         this.paneSessions.delete(paneId)
         this.pendingPaneOutput.delete(paneId)
@@ -1161,6 +1283,8 @@ export class TmuxController {
     async restorePaneHistory(paneId: number): Promise<void> {
         const snapshot = this.pendingSnapshots.get(paneId)
         if (!snapshot) {
+            // start() calls ensurePaneSnapshot() before this, so a missing
+            // snapshot means the capture itself failed (pane already gone).
             this.logger.warn(`No pre-loaded snapshot for pane %${paneId}, skipping`)
             return
         }
