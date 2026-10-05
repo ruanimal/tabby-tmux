@@ -675,6 +675,26 @@ describe('TmuxController', () => {
         controller: TmuxController,
         written: string[],
         history: string,
+        stateStr: string = STATE_LINE,
+    ): Promise<void> {
+        await answerAttachDiscoveryRaw(
+            controller,
+            written,
+            stateStr,
+            `%begin 1 3 1\n${history}\n%end 3\n`,
+        )
+    }
+
+    /**
+     * Same as above, but with an explicit capture-pane response payload — used
+     * to reproduce tmux's real byte shape (one line per captured ROW, with the
+     * block terminator newline before %end).
+     */
+    async function answerAttachDiscoveryRaw(
+        controller: TmuxController,
+        written: string[],
+        stateStr: string,
+        historyPayload: string,
     ): Promise<void> {
         await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-windows')))
         controller.gateway.executeData(
@@ -683,7 +703,9 @@ describe('TmuxController', () => {
         await waitForWrite(written, (w) => w.some((x) => x.startsWith('list-panes')))
         controller.gateway.executeData(Buffer.from('%begin 1 2 1\n%1 @0 1\n%end 2\n'))
         await waitForWrite(written, (w) => w.some((x) => x.startsWith('capture-pane -peqJN -S-')))
-        answerSnapshot(controller, history)
+        controller.gateway.executeData(Buffer.from(historyPayload))
+        controller.gateway.executeData(Buffer.from('%begin 1 4 1\n%end 4\n'))
+        controller.gateway.executeData(Buffer.from(`%begin 1 5 1\n${stateStr}\n%end 5\n`))
 
         // Discovery ends with the hostname query. Answer it so the response
         // queue stays aligned for the commands issued afterwards (a stale slot
@@ -694,18 +716,36 @@ describe('TmuxController', () => {
         controller.gateway.executeData(Buffer.from('%begin 1 6 1\nprobe.local\n%end 6\n'))
     }
 
+    /**
+     * Faithful `capture-pane` response: one line per captured row, each
+     * terminated by CRLF, plus the block terminator newline before %end
+     * (captured from tmux 3.4 via a control-mode client).
+     */
+    function captureRowsPayload(rows: string[]): string {
+        return `%begin 1 3 1\r\n${rows.map((r) => `${r}\r\n`).join('')}\r\n%end 3\r\n`
+    }
+
+    /** `list-panes -F` state response with the given cursor/height. */
+    function stateLine(cursorX: number, cursorY: number, rows = 24): string {
+        return (
+            `pane_id=%1\talternate_on=0\tcursor_x=${cursorX}\tcursor_y=${cursorY}\t` +
+            `scroll_region_upper=0\tscroll_region_lower=0\tcursor_flag=1\twrap_flag=1\t` +
+            `pane_height=${rows}`
+        )
+    }
+
     /** Answer the three capture commands of one snapshot, in queue order. */
     function answerSnapshot(
         controller: TmuxController,
         history: string,
         {
             altHistory = '',
-            stateLine = STATE_LINE,
+            stateLine: stateStr = STATE_LINE,
         }: { altHistory?: string; stateLine?: string } = {},
     ): void {
         controller.gateway.executeData(Buffer.from(`%begin 1 3 1\n${history}\n%end 3\n`))
         controller.gateway.executeData(Buffer.from(`%begin 1 4 1\n${altHistory}\n%end 4\n`))
-        controller.gateway.executeData(Buffer.from(`%begin 1 5 1\n${stateLine}\n%end 5\n`))
+        controller.gateway.executeData(Buffer.from(`%begin 1 5 1\n${stateStr}\n%end 5\n`))
     }
 
     it('delivers output produced after the snapshot capture (issue #10)', async () => {
@@ -775,6 +815,84 @@ describe('TmuxController', () => {
         expect(rendered).toContain('fresh-screen')
         // The gap output is contained in the fresh snapshot: not replayed twice.
         expect(rendered).not.toContain('LIVE-DURING-GAP')
+    })
+
+    it("restores the pane's blank bottom row and tmux's cursor row", async () => {
+        const { controller, written } = createController()
+        controller.setClientSizePushed()
+
+        // Real tmux 3.4 shape for a pane showing "a"/"b"/"c" and idling: the
+        // capture returns all 24 screen rows (the trailing 21 blank) and the
+        // pane's cursor sits on the blank row below "c" (cursor_x=0 cursor_y=3).
+        const rows = ['a', 'b', 'c', ...Array.from({ length: 21 }, () => '')]
+        const discover = controller.refreshPanes()
+        await answerAttachDiscoveryRaw(
+            controller,
+            written,
+            stateLine(0, 3),
+            captureRowsPayload(rows),
+        )
+        await discover
+
+        const session = new TmuxPaneSession(createLoggerMock(), controller, 1)
+        const emitted: string[] = []
+        session.output$.subscribe((d) => emitted.push(d.toString()))
+        const startPromise = session.start()
+        session.gridApplied()
+        await startPromise
+
+        const rendered = emitted.join('')
+        // Every captured row is written — including the trailing blank one,
+        // which is a real screen row (not a trailing-newline artifact).
+        const text = rendered.slice(0, rendered.indexOf('\x1b'))
+        expect(text.endsWith('\r\n')).toBe(true)
+        expect(text.split('\r\n')).toHaveLength(rows.length + 1)
+        // The cursor is placed on tmux's own row (blank row 4), not at the end
+        // of "c" — otherwise the next output would be appended to it ("c…").
+        expect(rendered.endsWith('\x1b[4;1H')).toBe(true)
+    })
+
+    it('does not merge replayed output into the last snapshot line', async () => {
+        const { controller, written } = createController()
+        controller.setClientSizePushed()
+
+        // Streaming pane captured mid-run: 3 history rows + 24 screen rows
+        // whose last content row is "896" and whose bottom row is blank
+        // (tmux scrolls, so cursor_y stays on row 23 with cursor_x=0).
+        const history = ['0', '1', '2']
+        const screen = [...Array.from({ length: 23 }, (_, i) => String(874 + i)), '']
+        const discover = controller.refreshPanes()
+        await answerAttachDiscoveryRaw(
+            controller,
+            written,
+            stateLine(0, 23),
+            captureRowsPayload([...history, ...screen]),
+        )
+        await discover
+
+        // Output produced after the capture; replayed when the pane is mounted.
+        // tmux octal-escapes newlines inside %output (\015\012 = CR LF); the
+        // real newline terminates the protocol line itself.
+        controller.gateway.executeData(Buffer.from('%output %1 897\\015\\012\n'))
+
+        const session = new TmuxPaneSession(createLoggerMock(), controller, 1)
+        const emitted: string[] = []
+        session.output$.subscribe((d) => emitted.push(d.toString()))
+        const startPromise = session.start()
+        session.gridApplied()
+        await startPromise
+
+        const rendered = emitted.join('')
+        const text = rendered.slice(0, rendered.indexOf('\x1b'))
+        expect(text.split('\r\n')).toHaveLength(history.length + screen.length + 1)
+
+        // The replayed "897" must start on tmux's cursor row (the blank bottom
+        // row 24). Restoring it at the end of the "896" line instead produces
+        // "896897" on screen.
+        const marker = '\x1b[24;1H'
+        const markerIndex = rendered.lastIndexOf(marker)
+        expect(markerIndex).toBeGreaterThan(-1)
+        expect(rendered.slice(markerIndex + marker.length)).toBe('897\r\n')
     })
 })
 

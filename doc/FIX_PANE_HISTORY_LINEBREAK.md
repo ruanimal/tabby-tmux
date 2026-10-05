@@ -191,3 +191,37 @@ capture-pane -epJ -a -S- -t %${paneId}
 1. **`gridApplied()` 等待**：`TmuxPaneSession.start()` 先等 pane 的 xterm 应用 tmux 布局列宽（首次 `setTmuxGrid → xterm.resize`）再恢复历史 —— 否则历史按 xterm 初始列宽（attach 时 fit 用 fallback 字体算的）写入，逻辑行被错误折行。
 2. **折叠 zsh SIGWINCH 重绘残留**：窗口尺寸变化（split/resize/attach 的 refresh-client）时 zsh 重绘 prompt，会把一行 prompt 推进 tmux 历史（每次 +1）；`collapseRedundantTailLines()` 折叠末尾连续相同的行（保留 1 行）。
 3. **删除历史部分/开头的全空格占位行 + pop 末尾伪影空行**：tmux 按窗口宽度存储历史，capture -S- 会输出宽于 pane 的占位行（写入 pane 宽度 xterm 时 wrap 膨胀行数、把屏幕内容下推）；按"最后 rows 行 = 屏幕"剔除历史部分的全空格占位行，并 pop capture 输出末尾换行产生的空元素。
+
+## 后续更新（2026-10：capture 空白行丢失 / 光标行错位）
+
+**现象**：attach 后 pane 历史里某个位置少了一个换行，例如 `896` 与 `897` 粘成一行
+`896897`（`for i in {1..10000}; do echo $i; sleep 0.1; done` 这类持续输出最容易触发）。
+
+**实测（tmux 3.4，独立 socket + control-mode 原始字节）**：
+
+- 每个输出行都以 CRLF 结尾，`%end` 前**没有**额外终止符：
+  - `display-message -p "#{host}"` → `%begin …\r\nneon\r\n`
+  - `capture-pane -peqJN -S-`（24 行 pane，内容 a/b/c）→ 25 个 CRLF = `%begin` 行 + 24 行
+- 因此响应里的空行就是**真实的空白输出行**（capture 的空白屏幕行），不是伪影。
+
+**根因**：
+
+1. `TmuxGateway.executeData()` 里的 `if (line)` 直接丢弃空行 → capture 的空白屏幕行全部
+   丢失（不只是末尾），响应行数与 pane 行数不再一致；
+2. `restorePaneHistory()` 又把行尾空元素当成「capture 尾换行伪影」pop 掉 → 再少一行；
+3. 结果：写出的屏幕比 tmux 的屏幕少一行，`scrolled = lines.length - rows` 随之错位，
+   光标被放到最后一行内容（`896`）的行尾 —— 紧接着 replay 的 `897` 就接成了 `896897`。
+
+**修复**：
+
+1. gateway 保留响应块内的空行（`executeData` 不再跳过空行；`executeLine` 在
+   `inResponseBlock` 时 push `''`，块外的空行仍忽略），并删除已成死代码、且会吃掉真实
+   末尾空行的 `stripLastNewline()`；
+2. `restorePaneHistory()` 不再 pop 行尾空元素（响应现在恰好一行对应一个 row）；
+3. 光标：当 tmux 的 `cursor_y` 落在最后一行内容**下方**的空白行时，把光标放到那一行
+   （`CUP(cursor_y+1, cursor_x+1)`）—— 流式输出时 tmux 滚动、光标常驻底行，旧逻辑把它
+   拉到内容行行尾正是产生粘连的原因。
+
+**回归测试**：`src/gateway.spec.ts`（响应块内空行保留 / 块外空行忽略）、
+`src/session.spec.ts`（`restores the pane's blank bottom row and tmux's cursor row`、
+`does not merge replayed output into the last snapshot line`）。

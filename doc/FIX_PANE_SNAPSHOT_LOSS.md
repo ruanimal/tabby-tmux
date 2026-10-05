@@ -67,3 +67,10 @@ pane 只剩下 attach 时刻的旧画面，看起来就是「空白 / 不更新�
 2. 在 w1 里跑持续输出的命令，例如 `while :; do date; sleep 1; done`
 3. 从宿主终端进入 tmux 模式，**不要切窗口**，等 10~30 秒
 4. 点 window bar 切到 w1：修复前显示的是 attach 时刻的画面，第 2~3 步之间的输出全部不见
+
+## 后续修复（2026-10）：capture 空白行丢失
+
+上面的 replay 边界又暴露出一个更底层的缺陷：gateway 丢弃了 capture 响应里的空白行
+（真实屏幕行），恢复出的屏幕比 tmux 少一行、光标落到上一行行尾，于是 replay 的第一行会
+粘上去（`896897`）。实测数据、根因与修复见
+`doc/FIX_PANE_HISTORY_LINEBREAK.md` 的「后续更新（2026-10：capture 空白行丢失 / 光标行错位」。

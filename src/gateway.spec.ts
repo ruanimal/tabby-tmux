@@ -319,4 +319,26 @@ describe('TmuxGateway executeData buffering and DCS stripping', () => {
         gateway.executeData(Buffer.from('%end 1\x1b\\\n'))
         await expect(p).resolves.toBe('ok')
     })
+
+    it('keeps blank lines inside a response block (capture-pane blank rows)', async () => {
+        const { gateway } = createGateway()
+        const p = gateway.sendCommand('capture-pane -peqJN -S- -t %1')
+
+        // Real tmux 3.4 shape: every output line is CRLF-terminated and there
+        // is no extra terminator before %end, so a blank line is a blank
+        // captured row (e.g. a blank screen row of the pane).
+        gateway.executeData(Buffer.from('%begin 1 1 1\r\na\r\nb\r\n\r\n\r\n%end 1\r\n'))
+        await expect(p).resolves.toBe('a\nb\n\n')
+    })
+
+    it('ignores blank lines outside a response block', async () => {
+        const { gateway } = createGateway()
+
+        // Stray CRLF in the PTY stream must not be taken as response data or
+        // shift command/response matching.
+        gateway.executeData(Buffer.from('\r\n\r\n'))
+        const p = gateway.sendCommand('list-windows')
+        gateway.executeData(Buffer.from('%begin 1 1 1\r\nok\r\n%end 1\r\n'))
+        await expect(p).resolves.toBe('ok')
+    })
 })

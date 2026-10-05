@@ -166,6 +166,14 @@ export class TmuxGateway {
     /**
      * Feed raw PTY data.  Buffers incomplete lines across calls so that TCP
      * fragment boundaries never split a protocol line.
+     *
+     * Empty lines are forwarded too: inside a response block they are real
+     * output lines (tmux terminates EVERY output line with CRLF and adds no
+     * extra terminator — verified against tmux 3.4 for display-message,
+     * list-windows, list-panes and capture-pane), so a blank line is e.g. a
+     * blank screen row of capture-pane output. Dropping it loses that row and
+     * shifts everything below it up. executeLine() discards blank lines that
+     * are outside a response block.
      */
     executeData(data: Buffer): void {
         this.lineBuffer += data.toString('utf-8')
@@ -174,10 +182,7 @@ export class TmuxGateway {
         while ((newlineIdx = this.lineBuffer.indexOf('\n')) !== -1) {
             const rawLine = this.lineBuffer.substring(0, newlineIdx)
             this.lineBuffer = this.lineBuffer.substring(newlineIdx + 1)
-            const line = rawLine.replace(/\r$/, '')
-            if (line) {
-                this.executeLine(line)
-            }
+            this.executeLine(rawLine.replace(/\r$/, ''))
         }
     }
 
@@ -190,26 +195,29 @@ export class TmuxGateway {
             .replace(/^\x1bP\d+p/, '')
             .replace(/^P\d+p/, '')
             .replace(/\x1b\\$/, '')
-        if (!line) return
+        if (!line) {
+            // Blank line: response data (see executeData) or stream noise.
+            if (this.inResponseBlock) {
+                this.currentResponse.push('')
+            }
+            return
+        }
 
         this.log.info(`Received: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`)
 
         // Handle response blocks
         if (this.inResponseBlock) {
             if (line.startsWith(`%end ${this.currentCommandId}`) || line.startsWith(`%end `)) {
-                this.stripLastNewline()
                 this.finishCurrentCommand(false)
                 return
             } else if (
                 line.startsWith(`%error ${this.currentCommandId}`) ||
                 line.startsWith(`%error `)
             ) {
-                this.stripLastNewline()
                 this.finishCurrentCommand(true)
                 return
             } else if (line.startsWith('%exit')) {
                 // Tmux 1.8 bug workaround
-                this.stripLastNewline()
                 this.finishCurrentCommand(false)
                 // Fall through to handle %exit
             } else if (line.startsWith('%output ') || line.startsWith('%extended-output ')) {
@@ -346,15 +354,6 @@ export class TmuxGateway {
             this.initialized = true
             this.acceptNotifications = true
             this.initialized$.next()
-        }
-    }
-
-    private stripLastNewline(): void {
-        if (this.currentResponse.length > 0) {
-            const last = this.currentResponse[this.currentResponse.length - 1]
-            if (last === '') {
-                this.currentResponse.pop()
-            }
         }
     }
 

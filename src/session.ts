@@ -1316,15 +1316,15 @@ export class TmuxController {
         let primary = ''
         if (snapshot.history) {
             primary = this.collapseRedundantTailLines(snapshot.history)
-            // capture-pane output ends with a trailing newline, so split()
-            // yields one extra empty element; drop it FIRST so the
-            // history/screen split below uses the real line count (otherwise
-            // screenStart is off by one and the first screen row can be
-            // mistaken for history and dropped).
+            // The snapshot text is tmux's capture-pane output: exactly one line
+            // per captured ROW, blank rows included (the gateway keeps the blank
+            // lines of a response — tmux terminates every output line with CRLF
+            // and adds no extra terminator, so there is no trailing-newline
+            // artifact to remove here). Popping a trailing empty element would
+            // drop the pane's blank bottom row, shift the screen one row up and
+            // leave the cursor at the end of the last content line, so the
+            // output replayed afterwards merged into it ("896897").
             const lines = primary.split('\n')
-            if (lines.length > 1 && lines[lines.length - 1] === '') {
-                lines.pop()
-            }
             // Drop history-part placeholders (see the normalize notes above).
             const rows = state.rows
             if (rows && rows > 0 && lines.length > rows) {
@@ -1417,13 +1417,11 @@ export class TmuxController {
             // its grid. xterm is streaming: we write "history + screen" via
             // feedOutput, so when the content is shorter than the screen the
             // history lines stay on top and shift the tmux screen content
-            // down; additionally zsh's SIGWINCH prompt redraw can leave tmux's
-            // reported cursor_y on a blank line (prompt redrawn elsewhere).
-            // Instead of trusting cursor_y, put the cursor at the end of the
+            // down. On the primary screen the cursor normally sits on the
+            // prompt / last output line, so it is placed at the end of the
             // last non-empty content line, keeping tmux's horizontal cursor_x.
-            // On the primary screen the cursor normally sits on the prompt /
-            // last output line; full-screen apps (vim/less/htop) use the
-            // alternate screen and take the branch above.
+            // Full-screen apps (vim/less/htop) use the alternate screen and
+            // take the branch above.
             if (lastNonEmpty >= 0) {
                 // After writing N lines into a `rows` screen, output line i
                 // lands at xterm y = i - max(0, N - rows) (excess scrolls off).
@@ -1432,23 +1430,38 @@ export class TmuxController {
                 // using clientRows would overshoot and make xterm scroll.
                 const rows = state.rows ?? Math.max(1, this.clientRows)
                 const scrolled = Math.max(0, lines.length - rows)
-                const y = Math.max(0, Math.min(rows - 1, lastNonEmpty - scrolled))
+                const lastContentRow = lastNonEmpty - scrolled
                 // Visible width (strip SGR color codes) for a sane X clamp.
                 const visible = lines[lastNonEmpty].replace(/\x1b\[[0-9;]*m/g, '').length
-                // If tmux captured cursor_x = 0 but the last non-empty line
-                // (the prompt) has content, the pane was captured before the
-                // shell printed its prompt (slow login shells, e.g. bash on a
-                // fresh split: cursor still at 0,0) and %output delivered the
-                // prompt afterwards — the stale cursor_x would place the
-                // cursor at the start of the prompt line. Put it after the
-                // prompt instead. If the user was genuinely editing at column
-                // 0 the cursor jumps to end-of-line, which is acceptable on
-                // restore.
-                const x =
-                    state.cursorX > 0
-                        ? Math.max(0, Math.min(state.cursorX, Math.max(visible, 0)))
-                        : Math.max(0, Math.max(visible, 0))
-                session.feedOutput(Buffer.from(`\x1b[${y + 1};${x + 1}H`, 'utf-8'))
+                // tmux's own cursor row wins when it sits on a blank row BELOW
+                // the last content line. A pane that streams output keeps its
+                // cursor on the (blank) bottom row — tmux scrolls instead of
+                // moving past it — and the output replayed right after the
+                // restore continues from exactly there. Putting the cursor at
+                // the end of the content line instead made that output land on
+                // the same line ("896897" instead of "896" / "897").
+                const cursorRow = Math.max(0, Math.min(rows - 1, state.cursorY))
+                if (cursorRow > lastContentRow) {
+                    session.feedOutput(
+                        Buffer.from(`\x1b[${cursorRow + 1};${state.cursorX + 1}H`, 'utf-8'),
+                    )
+                } else {
+                    const y = Math.max(0, Math.min(rows - 1, lastContentRow))
+                    // If tmux captured cursor_x = 0 but the last non-empty line
+                    // (the prompt) has content, the pane was captured before the
+                    // shell printed its prompt (slow login shells, e.g. bash on a
+                    // fresh split: cursor still at 0,0) and %output delivered the
+                    // prompt afterwards — the stale cursor_x would place the
+                    // cursor at the start of the prompt line. Put it after the
+                    // prompt instead. If the user was genuinely editing at column
+                    // 0 the cursor jumps to end-of-line, which is acceptable on
+                    // restore.
+                    const x =
+                        state.cursorX > 0
+                            ? Math.max(0, Math.min(state.cursorX, Math.max(visible, 0)))
+                            : Math.max(0, Math.max(visible, 0))
+                    session.feedOutput(Buffer.from(`\x1b[${y + 1};${x + 1}H`, 'utf-8'))
+                }
             }
         }
     }
