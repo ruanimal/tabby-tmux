@@ -7,35 +7,7 @@ import { TmuxController, TmuxPaneSession } from './session'
 // tabby-terminal is an Angular partially-compiled package; loading it in Node
 // requires the Angular linker/JIT compiler, so stub BaseSession instead. The
 // fake class mirrors the members TmuxPaneSession actually uses.
-vi.mock('tabby-terminal', async () => {
-    const { Subject } = await import('rxjs')
-    class MockBaseSession {
-        open = false
-        protected output = new Subject<string>()
-        protected binaryOutput = new Subject<Buffer>()
-        output$ = this.output.asObservable()
-        binaryOutput$ = this.binaryOutput.asObservable()
-        middleware = {
-            feedFromSession: (data: Buffer) => {
-                this.output.next(data.toString())
-                this.binaryOutput.next(data)
-            },
-        }
-        protected logger: unknown
-        constructor(logger: unknown) {
-            this.open = true
-            this.logger = logger
-        }
-        protected emitOutput(data: Buffer): void {
-            this.middleware.feedFromSession(data)
-        }
-        async destroy(): Promise<void> {
-            this.output.complete()
-            this.binaryOutput.complete()
-        }
-    }
-    return { BaseSession: MockBaseSession }
-})
+vi.mock('tabby-terminal', async () => import('../test-support/sessionMocks'))
 
 function createLoggerMock() {
     return {
@@ -109,6 +81,89 @@ describe('TmuxPaneSession', () => {
         const { emitted } = await startSession(session)
         session.feedOutput(Buffer.from('c'))
         expect(emitted.map((b) => b.toString())).toEqual(['c'])
+    })
+
+    it('joins split UTF-8 bytes independently for each pane before decoding', async () => {
+        const first = createSession().session
+        const second = createSession().session
+        const firstOutput = (await startSession(first)).emitted
+        const secondOutput = (await startSession(second)).emitted
+
+        first.feedOutput(Buffer.from([0xe2, 0x96]))
+        second.feedOutput(Buffer.from([0xf0, 0x9f]))
+        first.feedOutput(Buffer.from([0x88]))
+        second.feedOutput(Buffer.from([0x9a, 0x80]))
+
+        expect(firstOutput).toEqual(['█'])
+        expect(secondOutput).toEqual(['🚀'])
+    })
+
+    it.each([
+        { completionSequence: 2, expected: ['frame'] },
+        { completionSequence: 3, expected: ['frame', '█'] },
+    ])(
+        'uses the completed character sequence when refreshing a snapshot ($completionSequence)',
+        async ({ completionSequence, expected }) => {
+            const { session, controller } = createSession()
+            const { emitted } = await startSession(session)
+            session.feedOutput(Buffer.from([0xe2, 0x96]), 1)
+            let finishCapture: (value: boolean) => void
+            vi.mocked(controller.ensurePaneSnapshot).mockImplementationOnce(
+                () => new Promise((resolve) => (finishCapture = resolve)),
+            )
+            vi.mocked(controller.restorePaneHistory).mockImplementationOnce(async () => {
+                session.feedSnapshot(Buffer.from('frame'))
+                return 2
+            })
+            const refreshing = session.screenBufferChanged('normal')
+            session.feedOutput(Buffer.from([0x88]), completionSequence)
+            finishCapture(true)
+            await refreshing
+            expect(emitted).toEqual(expected)
+        },
+    )
+
+    it('retains a covered partial character for output after a snapshot', async () => {
+        const { session, controller } = createSession()
+        const { emitted } = await startSession(session)
+        let finishCapture: (value: boolean) => void
+        vi.mocked(controller.ensurePaneSnapshot).mockImplementationOnce(
+            () => new Promise((resolve) => (finishCapture = resolve)),
+        )
+        vi.mocked(controller.restorePaneHistory).mockImplementationOnce(async () => {
+            session.feedSnapshot(Buffer.from('frame'))
+            return 2
+        })
+        const refreshing = session.screenBufferChanged('normal')
+        session.feedOutput(Buffer.from([0xe2, 0x96]), 2)
+        finishCapture(true)
+        await refreshing
+        session.feedOutput(Buffer.from([0x88]), 3)
+        expect(emitted).toEqual(['frame', '█'])
+    })
+
+    it('preserves invalid and binary bytes while aligning valid characters', async () => {
+        const { session } = createSession()
+        await startSession(session)
+        const binary: Buffer[] = []
+        session.binaryOutput$.subscribe((data) => binary.push(data))
+        const middleware = vi.spyOn(session.middleware, 'feedFromSession')
+        session.feedOutput(Buffer.from([0xff, 0x80, 0xe2]))
+        expect(middleware).toHaveBeenLastCalledWith(Buffer.from([0xff, 0x80, 0xe2]))
+        session.feedOutput(Buffer.from([0x96, 0x88, 0x00]))
+        expect(middleware).toHaveBeenLastCalledWith(Buffer.from([0x96, 0x88, 0x00]))
+        expect(Buffer.concat(binary)).toEqual(Buffer.from([0xff, 0x80, 0xe2, 0x96, 0x88, 0]))
+    })
+
+    it('flushes an incomplete trailing sequence when the pane closes', async () => {
+        const { session } = createSession()
+        await startSession(session)
+        const binary: Buffer[] = []
+        session.binaryOutput$.subscribe((data) => binary.push(data))
+        session.feedOutput(Buffer.from([0xe2, 0x96]))
+        expect(binary).toEqual([])
+        await session.destroy()
+        expect(Buffer.concat(binary)).toEqual(Buffer.from([0xe2, 0x96]))
     })
 
     it('still flushes pre-grid output when history restore fails', async () => {
@@ -372,6 +427,31 @@ describe('TmuxController', () => {
         controller.gateway.executeData(Buffer.from('%begin 1 1 1\n%end 1\n'))
         await p
     }
+
+    it('renders a character split across real control stream notifications', async () => {
+        const { controller } = createController()
+        await initController(controller)
+        const session = new TmuxPaneSession(createLoggerMock(), controller, 1)
+        const output: string[] = []
+        session.output$.subscribe((data) => output.push(data))
+        const starting = session.start()
+        session.gridApplied()
+        await starting
+
+        controller.handleData(
+            Buffer.concat([Buffer.from('%output %1 '), Buffer.from([0xe2, 0x96])]),
+        )
+        controller.handleData(Buffer.from('\n'))
+        controller.handleData(
+            Buffer.concat([
+                Buffer.from('%output %1 '),
+                Buffer.from([0x88]),
+                Buffer.from('\\015\\012\n'),
+            ]),
+        )
+
+        expect(output.join('')).toBe('█\r\n')
+    })
 
     it('tracks the active pane per window via %window-pane-changed', async () => {
         const { controller } = createController()

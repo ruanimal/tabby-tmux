@@ -3,27 +3,7 @@ import type { ConfigService, Logger } from 'tabby-core'
 import type { Injector } from '@angular/core'
 import { TmuxController, TmuxPaneSession } from './session'
 
-vi.mock('tabby-terminal', async () => {
-    const { Subject } = await import('rxjs')
-    return {
-        BaseSession: class {
-            protected output = new Subject<string>()
-            protected binaryOutput = new Subject<Buffer>()
-            output$ = this.output.asObservable()
-            binaryOutput$ = this.binaryOutput.asObservable()
-            open = true
-            constructor(protected logger: Logger) {}
-            protected emitOutput(data: Buffer): void {
-                this.output.next(data.toString())
-                this.binaryOutput.next(data)
-            }
-            async destroy(): Promise<void> {
-                this.output.complete()
-                this.binaryOutput.complete()
-            }
-        },
-    }
-})
+vi.mock('tabby-terminal', async () => import('../test-support/sessionMocks'))
 
 function state(alternate = false, history = 0, rows = 3): string {
     return (

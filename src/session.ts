@@ -1,5 +1,5 @@
 import { Subject } from 'rxjs'
-import { BaseSession } from 'tabby-terminal'
+import { BaseSession, SessionMiddleware } from 'tabby-terminal'
 import { Logger, ConfigService } from 'tabby-core'
 import { createConditionalLogger, ConditionalLogger } from './logHelper'
 import { Injector } from '@angular/core'
@@ -21,6 +21,55 @@ interface PaneOutputChunk {
     sequence?: number
 }
 
+/** Align terminal text chunks after binary-aware session middleware. */
+class PaneUTF8Splitter extends SessionMiddleware {
+    private pending = Buffer.alloc(0)
+
+    override feedFromSession(data: Buffer): void {
+        const complete = this.split(data)
+        if (complete.length) super.feedFromSession(complete)
+    }
+
+    /** Advance across bytes represented by a restored snapshot. */
+    discard(data: Buffer): void {
+        this.split(data)
+    }
+
+    override close(): void {
+        if (this.pending.length) super.feedFromSession(this.pending)
+        this.pending = Buffer.alloc(0)
+        super.close()
+    }
+
+    private split(data: Buffer): Buffer {
+        if (this.pending.length) data = Buffer.concat([this.pending, data])
+        this.pending = Buffer.alloc(0)
+
+        // A UTF-8 sequence can have at most three trailing continuation bytes.
+        let start = data.length - 1
+        while (start >= 0 && data[start] >= 0x80 && data[start] <= 0xbf) {
+            if (data.length - start > 3) return data
+            start--
+        }
+        if (start < 0) return data
+        const lead = data[start]
+        const width =
+            lead >= 0xc2 && lead <= 0xdf
+                ? 2
+                : lead >= 0xe0 && lead <= 0xef
+                  ? 3
+                  : lead >= 0xf0 && lead <= 0xf4
+                    ? 4
+                    : 0
+        if (width && data.length - start < width) {
+            // Retain only the incomplete sequence, not the entire input chunk.
+            this.pending = Buffer.from(data.subarray(start))
+            return data.subarray(0, start)
+        }
+        return data
+    }
+}
+
 /**
  * TmuxPaneSession - Represents a single tmux pane as a terminal session
  */
@@ -30,6 +79,7 @@ export class TmuxPaneSession extends BaseSession {
      * multiple feedOutput calls.  Buffered until the closing ST arrives.
      */
     private _pendingTitleSeq: Buffer | null = null
+    private readonly _utf8Splitter = new PaneUTF8Splitter()
 
     constructor(
         logger: Logger,
@@ -37,6 +87,7 @@ export class TmuxPaneSession extends BaseSession {
         public paneId: number,
     ) {
         super(logger)
+        this.middleware.push(this._utf8Splitter)
         this.open = true
         this.controller.registerPane(this.paneId, this)
     }
@@ -143,6 +194,8 @@ export class TmuxPaneSession extends BaseSession {
                             sequence > this._snapshotCovers)
                     ) {
                         this.emitOutput(data)
+                    } else if (!this._destroyed) {
+                        this._utf8Splitter.discard(data)
                     }
                 }
                 this._pendingOutput = []

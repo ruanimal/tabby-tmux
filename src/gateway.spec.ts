@@ -377,6 +377,41 @@ describe('TmuxGateway executeLine notifications', () => {
 })
 
 describe('TmuxGateway executeData buffering and DCS stripping', () => {
+    it('preserves raw pane bytes across transport and output boundaries', async () => {
+        const { gateway } = createGateway()
+        await initGateway(gateway)
+        const outputs: Array<{ paneId: number; data: Buffer; latency?: number }> = []
+        gateway.output$.subscribe((output) => outputs.push(output))
+
+        gateway.executeData(Buffer.concat([Buffer.from('%output %1 '), Buffer.from([0xe2])]))
+        gateway.executeData(Buffer.concat([Buffer.from([0x96]), Buffer.from('\n%output %2 X\n')]))
+        gateway.executeData(
+            Buffer.concat([
+                Buffer.from('%extended-output %1 250 : '),
+                Buffer.from([0x88]),
+                Buffer.from('\\015\\012\n'),
+            ]),
+        )
+
+        expect(outputs).toEqual([
+            { paneId: 1, data: Buffer.from([0xe2, 0x96]) },
+            { paneId: 2, data: Buffer.from('X') },
+            { paneId: 1, data: Buffer.from([0x88, 13, 10]), latency: 0.25 },
+        ])
+    })
+
+    it('decodes text notifications and responses after assembling split UTF-8 bytes', async () => {
+        const { gateway } = createGateway()
+        await initGateway(gateway)
+        const renamed: string[] = []
+        gateway.windowRenamed$.subscribe(({ name }) => renamed.push(name))
+        const response = gateway.sendCommand('display-message')
+        const wire = Buffer.from('%window-renamed @1 窗口\n%begin 1 2 1\n你好🚀\n%end 2\n')
+        for (const byte of wire) gateway.executeData(Buffer.from([byte]))
+        expect(renamed).toEqual(['窗口'])
+        await expect(response).resolves.toBe('你好🚀')
+    })
+
     it('buffers partial lines across executeData calls', async () => {
         const { gateway } = createGateway()
         const p = gateway.sendCommand('list-windows')

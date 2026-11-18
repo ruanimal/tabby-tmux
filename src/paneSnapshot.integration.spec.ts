@@ -10,27 +10,7 @@ import type { Injector } from '@angular/core'
 import { TmuxController, TmuxPaneSession } from './session'
 import { flattenLayout, parseTmuxLayout } from './layoutParser'
 
-vi.mock('tabby-terminal', async () => {
-    const { Subject } = await import('rxjs')
-    return {
-        BaseSession: class {
-            protected output = new Subject<string>()
-            protected binaryOutput = new Subject<Buffer>()
-            output$ = this.output.asObservable()
-            binaryOutput$ = this.binaryOutput.asObservable()
-            open = true
-            constructor(protected logger: Logger) {}
-            protected emitOutput(data: Buffer): void {
-                this.output.next(data.toString())
-                this.binaryOutput.next(data)
-            }
-            async destroy(): Promise<void> {
-                this.output.complete()
-                this.binaryOutput.complete()
-            }
-        },
-    }
-})
+vi.mock('tabby-terminal', async () => import('../test-support/sessionMocks'))
 
 // Explicit opt-in: tests start and clean up only a unique, temporary server.
 const binary = process.env.TMUX_TEST_BINARY
@@ -39,6 +19,77 @@ const htop = process.env.HTOP_TEST_BINARY
 const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'"
 
 describe.skipIf(!binary)('real tmux snapshot restoration', () => {
+    it('renders a UTF-8 character split across real tmux output notifications', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'tabby-tmux-utf8-'))
+        const socket = join(root, 'socket')
+        const cli = (...args: string[]) => {
+            const result = spawnSync(binary, ['-S', socket, '-f', '/dev/null', ...args], {
+                encoding: 'utf8',
+            })
+            if (result.error) throw result.error
+            if (result.status !== 0) throw new Error(result.stderr)
+            return result.stdout
+        }
+        const logger = {
+            debug: vi.fn(),
+            info: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn(),
+        } as unknown as Logger
+        let controller: TmuxController | undefined
+        let control: ReturnType<typeof spawn> | undefined
+        try {
+            cli('new-session', '-d', '-s', 'utf8', '-x', '80', '-y', '24', 'exec /bin/sh')
+            const paneId = Number(
+                cli('display-message', '-p', '-t', 'utf8', '#{pane_id}').trim().slice(1),
+            )
+            control = spawn(binary, ['-S', socket, '-C', 'attach', '-t', 'utf8'])
+            const transport = control
+            controller = new TmuxController(
+                logger,
+                null as unknown as Injector,
+                (data) => transport.stdin.write(data.replace(/\r/g, '\n')),
+                () => undefined,
+            )
+            const owner = controller
+            const initialized = firstValueFrom(owner.gateway.initialized$)
+            transport.stdout.on('data', (data: Buffer) => owner.handleData(data))
+            await initialized
+            vi.spyOn(owner, 'hasPendingSnapshot').mockReturnValue(true)
+            vi.spyOn(owner, 'restorePaneHistory').mockResolvedValue(undefined)
+            const session = new TmuxPaneSession(logger, owner, paneId)
+            let output = ''
+            const notifications: Buffer[] = []
+            session.output$.subscribe((data) => (output += data))
+            owner.gateway.output$.subscribe(({ paneId: id, data }) => {
+                if (id === paneId) notifications.push(data)
+            })
+            const starting = session.start()
+            session.gridApplied()
+            await starting
+
+            cli(
+                'send-keys',
+                '-t',
+                'utf8',
+                '-l',
+                "printf '\\342\\226'; sleep 0.3; printf '\\210\\n'",
+            )
+            cli('send-keys', '-t', 'utf8', 'Enter')
+            await expect.poll(() => output).toContain('█')
+            expect(output).not.toContain('�')
+            expect(notifications.some((data) => data.includes(Buffer.from([0xe2, 0x96])))).toBe(
+                true,
+            )
+            expect(notifications.some((data) => data.includes(Buffer.from([0x88])))).toBe(true)
+        } finally {
+            await controller?.destroy()
+            control?.kill()
+            spawnSync(binary, ['-S', socket, 'kill-server'])
+            rmSync(root, { recursive: true, force: true })
+        }
+    }, 15000)
+
     it.each([
         { priorResize: false, resizeAfter: false },
         { priorResize: false, resizeAfter: true },

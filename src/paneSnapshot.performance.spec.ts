@@ -10,27 +10,7 @@ import type { Injector } from '@angular/core'
 import { TmuxController, TmuxPaneSession } from './session'
 import { DEFAULT_HISTORY_RESTORE_LIMIT } from './historyRestore'
 
-vi.mock('tabby-terminal', async () => {
-    const { Subject } = await import('rxjs')
-    return {
-        BaseSession: class {
-            protected output = new Subject<string>()
-            protected binaryOutput = new Subject<Buffer>()
-            output$ = this.output.asObservable()
-            binaryOutput$ = this.binaryOutput.asObservable()
-            open = true
-            constructor(protected logger: Logger) {}
-            protected emitOutput(data: Buffer): void {
-                this.output.next(data.toString())
-                this.binaryOutput.next(data)
-            }
-            async destroy(): Promise<void> {
-                this.output.complete()
-                this.binaryOutput.complete()
-            }
-        },
-    }
-})
+vi.mock('tabby-terminal', async () => import('../test-support/sessionMocks'))
 
 // Each run owns its server/socket. Opt in explicitly, also in CI.
 const binary = process.env.TMUX_TEST_BINARY

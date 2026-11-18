@@ -207,13 +207,15 @@ export class TmuxGateway {
      * are outside a response block.
      */
     executeData(data: Buffer): void {
-        this.lineBuffer += data.toString('utf-8')
+        // Latin-1 keeps every byte intact, including incomplete UTF-8 in pane
+        // output and characters split across transport chunks.
+        this.lineBuffer += data.toString('latin1')
 
         let newlineIdx: number
         while ((newlineIdx = this.lineBuffer.indexOf('\n')) !== -1) {
             const rawLine = this.lineBuffer.substring(0, newlineIdx)
             this.lineBuffer = this.lineBuffer.substring(newlineIdx + 1)
-            this.executeLine(rawLine.replace(/\r$/, ''))
+            this.processLine(rawLine.replace(/\r$/, ''), true)
         }
     }
 
@@ -221,11 +223,18 @@ export class TmuxGateway {
      * Process a single complete line from tmux control mode
      */
     executeLine(line: string): void {
+        this.processLine(line, false)
+    }
+
+    private processLine(line: string, byteString: boolean): void {
         // Strip DCS artifacts
         line = line
             .replace(/^\x1bP\d+p/, '')
             .replace(/^P\d+p/, '')
             .replace(/\x1b\\$/, '')
+        // Pane payloads are arbitrary bytes. All other protocol lines are text.
+        const paneOutput = line.startsWith('%output ') || line.startsWith('%extended-output ')
+        if (byteString && !paneOutput) line = Buffer.from(line, 'latin1').toString('utf-8')
         if (!line) {
             // Blank line: response data (see executeData) or stream noise.
             if (this.inResponseBlock) {
@@ -257,9 +266,9 @@ export class TmuxGateway {
                 // response (e.g. capture-pane) and the live output is lost.
                 if (this.acceptNotifications) {
                     if (line.startsWith('%output ')) {
-                        this.parseOutput(line)
+                        this.parseOutput(line, byteString)
                     } else {
-                        this.parseExtendedOutput(line)
+                        this.parseExtendedOutput(line, byteString)
                     }
                 }
                 return
@@ -276,7 +285,7 @@ export class TmuxGateway {
         } else if (line.startsWith('%output ')) {
             if (this.acceptNotifications) {
                 this.log.info(`Parsing output line: ${line.substring(0, 50)}...`)
-                this.parseOutput(line)
+                this.parseOutput(line, byteString)
             } else {
                 this.log.warn(
                     `Ignored output (not accepting notifications): ${line.substring(0, 50)}...`,
@@ -284,7 +293,7 @@ export class TmuxGateway {
             }
         } else if (line.startsWith('%extended-output ')) {
             if (this.acceptNotifications) {
-                this.parseExtendedOutput(line)
+                this.parseExtendedOutput(line, byteString)
             }
         } else if (line.startsWith('%layout-change ')) {
             if (this.acceptNotifications) {
@@ -391,7 +400,7 @@ export class TmuxGateway {
         }
     }
 
-    private parseOutput(line: string): void {
+    private parseOutput(line: string, byteString: boolean): void {
         // %output %<pane> <data>
         const match = line.match(/^%output %(\d+) (.*)$/)
         if (!match) {
@@ -400,21 +409,21 @@ export class TmuxGateway {
         }
 
         const paneId = parseInt(match[1])
-        const data = this.decodeOutput(match[2])
+        const data = this.decodeOutput(match[2], byteString)
         this.log.info(
             `Parsed output for pane %${paneId}: ${data.length} bytes (match_len=${match[2].length})`,
         )
         this.output$.next({ paneId, data })
     }
 
-    private parseExtendedOutput(line: string): void {
+    private parseExtendedOutput(line: string, byteString: boolean): void {
         // %extended-output %<pane> <latency> : <data>
         const match = line.match(/^%extended-output %(\d+) (\d+) : (.*)$/)
         if (!match) return
 
         const paneId = parseInt(match[1])
         const latency = parseInt(match[2]) / 1000 // Convert ms to seconds
-        const data = this.decodeOutput(match[3])
+        const data = this.decodeOutput(match[3], byteString)
         this.output$.next({ paneId, data, latency })
     }
 
@@ -535,7 +544,7 @@ export class TmuxGateway {
     /**
      * Decode tmux octal-escaped output to Buffer
      */
-    private decodeOutput(str: string): Buffer {
+    private decodeOutput(str: string, byteString: boolean): Buffer {
         const bytes: number[] = []
         for (let i = 0; i < str.length; i++) {
             if (str[i] === '\\' && i + 3 < str.length) {
@@ -546,7 +555,11 @@ export class TmuxGateway {
                     continue
                 }
             }
-            // Handle UTF-8 and UTF-16 surrogate pairs properly
+            if (byteString) {
+                bytes.push(str.charCodeAt(i))
+                continue
+            }
+            // executeLine also accepts decoded text from direct callers.
             const codePoint = str.codePointAt(i)
             if (codePoint !== undefined) {
                 const charStr = String.fromCodePoint(codePoint)
